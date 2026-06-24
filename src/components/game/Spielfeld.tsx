@@ -193,9 +193,6 @@ export function Spielfeld({ fortschritt, onZurueck, onSieg }: Props) {
     apfelSpawnsImMatch: 0,
   });
 
-  const startbasisHp = useMemo(() => BASIS_HP_GRUND + VERTEIDIGUNG_BONUS[0], []);
-  void startbasisHp;
-
   // Tick game loop
   useEffect(() => {
     if (sieg || niederlage) return;
