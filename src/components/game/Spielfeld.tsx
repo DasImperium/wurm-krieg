@@ -696,11 +696,6 @@ function WurmAnzeige({ wurm }: { wurm: Wurm }) {
     >
       <div className="flex items-end gap-0.5">
         {(richtung === -1 ? teile : [...teile].reverse()).map((t, i) => {
-          const istGeplatzt = wurm.geplatzt.has(t.id);
-          if (istGeplatzt && wurm.sterbend) {
-            // Bereits weg
-            return null;
-          }
           const pulse = flash ? "ring-4 ring-red-500" : "";
           const baseScale = "transition-all duration-300";
           const platzAnim = wurm.sterbend && wurm.geplatzt.has(t.id)
