@@ -51,6 +51,9 @@ const PRODUKTION_KOSTEN = [100, 500, 1000];
 const VERTEIDIGUNG_KOSTEN = [150, 400, 800];
 const PRODUKTION_RATE = [5, 10, 20, 40];
 const VERTEIDIGUNG_BONUS = [0, 200, 500, 1000];
+const KANONEN_SCHADEN = [0, 25, 55, 100];
+const KANONEN_REICHWEITE = [0, 30, 55, 80];
+const KANONEN_INTERVALL_MS = 2000;
 const BASIS_HP_GRUND = 1000;
 const TICK_MS = 50;
 
@@ -191,7 +194,11 @@ export function Spielfeld({ fortschritt, onZurueck, onSieg }: Props) {
     aiSpawn: 0,
     matchAepfelLokal: 0,
     apfelSpawnsImMatch: 0,
+    spielerKanone: 0,
+    gegnerKanone: 0,
+    kanonenBlitz: [] as Array<{ id: number; seite: "spieler" | "gegner"; zielX: number; bis: number }>,
   });
+  const [kanonenBlitze, setKanonenBlitze] = useState<typeof refs.current.kanonenBlitz>([]);
 
   // Tick game loop
   useEffect(() => {
@@ -366,11 +373,45 @@ export function Spielfeld({ fortschritt, onZurueck, onSieg }: Props) {
         return w.geplatzt.size < gesamt;
       });
 
+      // --- Basis-Kanonen ---
+      r.spielerKanone += TICK_MS;
+      r.gegnerKanone += TICK_MS;
+      const feuereKanone = (seite: "spieler" | "gegner", stufe: number) => {
+        if (stufe <= 0) return;
+        const reichweite = KANONEN_REICHWEITE[stufe];
+        const schaden = KANONEN_SCHADEN[stufe];
+        const basisX = seite === "spieler" ? 0 : 100;
+        const feinde = r.wuermer.filter((w) => !w.sterbend && w.seite !== seite);
+        let ziel: Wurm | null = null;
+        let minD = Infinity;
+        for (const f of feinde) {
+          const d = Math.abs(f.x - basisX);
+          if (d <= reichweite && d < minD) {
+            minD = d;
+            ziel = f;
+          }
+        }
+        if (!ziel) return;
+        schadenAnWurm(ziel, schaden, jetzt);
+        r.kanonenBlitz.push({ id: fallIdZaehler++, seite, zielX: ziel.x, bis: jetzt + 200 });
+      };
+      if (r.spielerKanone >= KANONEN_INTERVALL_MS) {
+        r.spielerKanone = 0;
+        feuereKanone("spieler", verteidigungsStufe);
+      }
+      if (r.gegnerKanone >= KANONEN_INTERVALL_MS) {
+        r.gegnerKanone = 0;
+        // Gegner-Verteidigung skaliert mit Spielerstufe (gleichwertige Bedrohung)
+        feuereKanone("gegner", Math.max(1, verteidigungsStufe));
+      }
+      r.kanonenBlitz = r.kanonenBlitz.filter((b) => b.bis > jetzt);
+
       setWuermerState([...r.wuermer]);
       setFallObjekte([...r.fall]);
+      setKanonenBlitze([...r.kanonenBlitz]);
     }, TICK_MS);
     return () => window.clearInterval(handle);
-  }, [produktionsStufe, fortschritt.upgrades, sieg, niederlage]);
+  }, [produktionsStufe, verteidigungsStufe, fortschritt.upgrades, sieg, niederlage]);
 
   // Basis HP Anpassung an Verteidigungsstufe
   useEffect(() => {
@@ -512,7 +553,8 @@ export function Spielfeld({ fortschritt, onZurueck, onSieg }: Props) {
       </div>
 
       {/* Kampf-Arena */}
-      <div className="relative h-64 w-full overflow-hidden bg-gradient-to-b from-sky-200 via-emerald-300 to-emerald-500">
+      <div className="w-full overflow-x-auto overflow-y-hidden">
+        <div className="relative h-64 w-[400%] min-w-[1600px] bg-gradient-to-b from-sky-200 via-emerald-300 to-emerald-500">
         {/* Wiese */}
         <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-b from-emerald-500 to-emerald-700" />
 
@@ -520,6 +562,20 @@ export function Spielfeld({ fortschritt, onZurueck, onSieg }: Props) {
         <Baum seite="links" name={fortschritt.spielerName} farbe="emerald" />
         {/* Gegner Baum rechts */}
         <Baum seite="rechts" name="Gegner" farbe="rose" />
+
+        {/* Kanonen-Blitze */}
+        {kanonenBlitze.map((b) => {
+          const startX = b.seite === "spieler" ? 0 : 100;
+          const links = Math.min(startX, b.zielX);
+          const breite = Math.abs(b.zielX - startX);
+          return (
+            <div
+              key={b.id}
+              className={`absolute top-20 h-1 ${b.seite === "spieler" ? "bg-emerald-300" : "bg-rose-300"} shadow-[0_0_8px_currentColor] opacity-80`}
+              style={{ left: `${links}%`, width: `${breite}%` }}
+            />
+          );
+        })}
 
         {/* Fall-Objekte */}
         {fallObjekte.map((o) => (
@@ -543,6 +599,7 @@ export function Spielfeld({ fortschritt, onZurueck, onSieg }: Props) {
         {wuermerState.map((w) => (
           <WurmAnzeige key={w.id} wurm={w} />
         ))}
+        </div>
       </div>
 
       {/* Werkstatt */}
@@ -684,15 +741,16 @@ function WurmAnzeige({ wurm }: { wurm: Wurm }) {
     { id: wurm.segmente.length, farbe: "bg-emerald-700", typ: "schwanz" as const },
   ];
 
-  // Positionierung: Kopf vorne, Rest dahinter (entgegen Bewegungsrichtung)
-  const richtung = wurm.seite === "spieler" ? -1 : 1; // schwanz richtung
+  // Positionierung: Kopf zeigt in Bewegungsrichtung.
+  // Spieler läuft nach rechts → Kopf rechts; Gegner läuft nach links → Kopf links.
+  const kopfRechts = wurm.seite === "spieler";
   return (
     <div
       className="absolute bottom-6"
       style={{ left: `${wurm.x}%`, transform: "translateX(-50%)" }}
     >
       <div className="flex items-end gap-0.5">
-        {(richtung === -1 ? teile : [...teile].reverse()).map((t, i) => {
+        {(kopfRechts ? [...teile].reverse() : teile).map((t, i) => {
           const pulse = flash ? "ring-4 ring-red-500" : "";
           const baseScale = "transition-all duration-300";
           const platzAnim = wurm.sterbend && wurm.geplatzt.has(t.id)
