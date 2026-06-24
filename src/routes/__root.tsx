@@ -77,14 +77,18 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
+      { title: "Wurmkrieg" },
+      { name: "description", content: "Wurm Krieg ist ein 2D-Strategiespiel, in dem Spieler einen Wurm bauen und gegen einen Gegner kämpfen." },
       { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { property: "og:title", content: "Wurmkrieg" },
+      { property: "og:description", content: "Wurm Krieg ist ein 2D-Strategiespiel, in dem Spieler einen Wurm bauen und gegen einen Gegner kämpfen." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:title", content: "Wurmkrieg" },
+      { name: "twitter:description", content: "Wurm Krieg ist ein 2D-Strategiespiel, in dem Spieler einen Wurm bauen und gegen einen Gegner kämpfen." },
+      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/acf1e82c-455f-46a9-84f8-e7c7cd81740d/id-preview-52c12030--1ddc7bf5-0ce9-4c15-95ae-b3c2d1187ed0.lovable.app-1782338099269.png" },
+      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/acf1e82c-455f-46a9-84f8-e7c7cd81740d/id-preview-52c12030--1ddc7bf5-0ce9-4c15-95ae-b3c2d1187ed0.lovable.app-1782338099269.png" },
     ],
     links: [
       {
