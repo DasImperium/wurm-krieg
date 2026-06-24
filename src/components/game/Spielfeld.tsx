@@ -741,15 +741,16 @@ function WurmAnzeige({ wurm }: { wurm: Wurm }) {
     { id: wurm.segmente.length, farbe: "bg-emerald-700", typ: "schwanz" as const },
   ];
 
-  // Positionierung: Kopf vorne, Rest dahinter (entgegen Bewegungsrichtung)
-  const richtung = wurm.seite === "spieler" ? -1 : 1; // schwanz richtung
+  // Positionierung: Kopf zeigt in Bewegungsrichtung.
+  // Spieler läuft nach rechts → Kopf rechts; Gegner läuft nach links → Kopf links.
+  const kopfRechts = wurm.seite === "spieler";
   return (
     <div
       className="absolute bottom-6"
       style={{ left: `${wurm.x}%`, transform: "translateX(-50%)" }}
     >
       <div className="flex items-end gap-0.5">
-        {(richtung === -1 ? teile : [...teile].reverse()).map((t, i) => {
+        {(kopfRechts ? [...teile].reverse() : teile).map((t, i) => {
           const pulse = flash ? "ring-4 ring-red-500" : "";
           const baseScale = "transition-all duration-300";
           const platzAnim = wurm.sterbend && wurm.geplatzt.has(t.id)
