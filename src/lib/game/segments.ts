@@ -29,60 +29,60 @@ export const SEGMENTE: Record<SegmentKey, SegmentDef> = {
     key: "beine",
     name: "Beine",
     beschreibung: "Erhöht die Geschwindigkeit des Wurms.",
-    kosten: 20,
-    hp: [50, 70, 90],
-    speedBonus: [4, 6, 8],
+    kosten: 25,
+    hp: [40, 55, 70],
+    speedBonus: [3, 5, 7],
   },
   panzer: {
     key: "panzer",
     name: "Panzer",
     beschreibung: "Massive Lebenspunkte, verlangsamt aber.",
-    kosten: 45,
-    hp: [250, 400, 600],
+    kosten: 55,
+    hp: [300, 500, 800],
     speedMalus: [2, 1.5, 1],
   },
   kettenhemd: {
     key: "kettenhemd",
     name: "Kettenhemd",
     beschreibung: "Reduziert eingehenden Schaden (max. 50%).",
-    kosten: 40,
-    hp: [60, 80, 110],
-    schadensReduktion: [5, 8, 12],
+    kosten: 50,
+    hp: [70, 100, 140],
+    schadensReduktion: [8, 14, 22],
   },
   heilung: {
     key: "heilung",
     name: "Heilung",
     beschreibung: "Heilt den gesamten Wurm alle 5 Sekunden.",
-    kosten: 50,
-    hp: [60, 80, 100],
-    heilung: [20, 40, 70],
+    kosten: 65,
+    hp: [70, 90, 120],
+    heilung: [25, 50, 90],
   },
   schallpistole: {
     key: "schallpistole",
     name: "Schallpistole",
     beschreibung: "Erhöht den Bissschaden des Kopfes.",
-    kosten: 60,
-    hp: [55, 75, 95],
-    nahkampfBonus: [12, 22, 35],
+    kosten: 75,
+    hp: [60, 80, 100],
+    nahkampfBonus: [20, 35, 55],
   },
   laser: {
     key: "laser",
     name: "Laser",
     beschreibung: "Fernkampf, Reichweite 15%.",
-    kosten: 80,
-    hp: [55, 75, 95],
-    fernkampf: { reichweite: 15, intervallMs: 1500, schaden: [30, 45, 65] },
+    kosten: 95,
+    hp: [60, 80, 100],
+    fernkampf: { reichweite: 18, intervallMs: 1400, schaden: [35, 55, 80] },
   },
   kastanie: {
     key: "kastanie",
     name: "Kastanie",
     beschreibung: "Legt Minen mit Flächenschaden (3 Stk., alle 20s).",
-    kosten: 75,
-    hp: [60, 80, 100],
+    kosten: 90,
+    hp: [70, 90, 120],
     fernkampf: {
       reichweite: 8,
       intervallMs: 20000,
-      schaden: [45, 70, 100],
+      schaden: [60, 95, 140],
       munition: 3,
     },
   },
@@ -90,12 +90,12 @@ export const SEGMENTE: Record<SegmentKey, SegmentDef> = {
     key: "raketenwerfer",
     name: "Raketenwerfer",
     beschreibung: "Reichweite 40%, 3 Raketen alle 15s.",
-    kosten: 150,
-    hp: [70, 90, 120],
+    kosten: 175,
+    hp: [80, 100, 130],
     fernkampf: {
       reichweite: 40,
       intervallMs: 15000,
-      schaden: [80, 120, 180],
+      schaden: [110, 160, 230],
       anzahl: 3,
     },
   },
@@ -129,13 +129,14 @@ export interface GespeicherterFortschritt {
   spielerName: string;
   aepfel: number;
   upgrades: Upgrades;
+  maxLevel: number;
 }
 
 export const SPEICHER_SCHLUESSEL = "krieg-der-wuermer-fortschritt";
 
 export function ladeFortschritt(): GespeicherterFortschritt {
   if (typeof window === "undefined") {
-    return { spielerName: "Spieler", aepfel: 5, upgrades: { ...STANDARD_UPGRADES } };
+    return { spielerName: "Spieler", aepfel: 5, upgrades: { ...STANDARD_UPGRADES }, maxLevel: 1 };
   }
   try {
     const roh = window.localStorage.getItem(SPEICHER_SCHLUESSEL);
@@ -145,9 +146,10 @@ export function ladeFortschritt(): GespeicherterFortschritt {
       spielerName: daten.spielerName || "Spieler",
       aepfel: typeof daten.aepfel === "number" ? daten.aepfel : 5,
       upgrades: { ...STANDARD_UPGRADES, ...(daten.upgrades || {}) },
+      maxLevel: Math.min(50, Math.max(1, typeof daten.maxLevel === "number" ? daten.maxLevel : 1)),
     };
   } catch {
-    return { spielerName: "Spieler", aepfel: 5, upgrades: { ...STANDARD_UPGRADES } };
+    return { spielerName: "Spieler", aepfel: 5, upgrades: { ...STANDARD_UPGRADES }, maxLevel: 1 };
   }
 }
 
