@@ -140,7 +140,7 @@ export function Hauptmenue({ fortschritt, onAenderung, onStart }: Props) {
             <Swords className="h-8 w-8 text-rose-200" /> Levelauswahl
           </h1>
           <p className="mt-1 text-sm text-emerald-100">
-            Höchstes erreichtes Level: <strong>{fortschritt.maxLevel}</strong> / 50. Belohnung: <strong>{`{ceil(Level / 3)}`}</strong> Rote Äpfel pro Sieg.
+            Höchstes erreichtes Level: <strong>{fortschritt.maxLevel}</strong> / 50. Belohnung pro Sieg: <strong>ceil(Level / 3)</strong> Rote Äpfel.
           </p>
           <div className="mt-4 grid grid-cols-5 gap-2 sm:grid-cols-10">
             {Array.from({ length: 50 }, (_, i) => i + 1).map((lvl) => {
