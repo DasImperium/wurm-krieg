@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Apple, Leaf, ArrowLeft, TrendingUp, Shield, Trophy } from "lucide-react";
+import {
+  Apple, Leaf, ArrowLeft, TrendingUp, Shield, Trophy,
+  Footprints, Link as LinkIcon, HeartPulse, Volume2, Zap, Bomb, Rocket, Smile,
+} from "lucide-react";
 import {
   SEGMENTE,
   SEGMENT_REIHENFOLGE,
@@ -18,6 +21,7 @@ interface Wurm {
   id: number;
   seite: "spieler" | "gegner";
   x: number;
+  pfad: number;
   kopfHp: number;
   kopfMax: number;
   schwanzHp: number;
@@ -43,19 +47,23 @@ interface FallObjekt {
 
 interface Props {
   fortschritt: GespeicherterFortschritt;
+  level: number;
   onZurueck: () => void;
   onSieg: (zusatzAepfel: number) => void;
 }
 
-const PRODUKTION_KOSTEN = [100, 500, 1000];
+const PRODUKTION_KOSTEN = [100, 350, 800];
 const VERTEIDIGUNG_KOSTEN = [150, 400, 800];
 const PRODUKTION_RATE = [5, 10, 20, 40];
 const VERTEIDIGUNG_BONUS = [0, 200, 500, 1000];
 const KANONEN_SCHADEN = [0, 25, 55, 100];
 const KANONEN_REICHWEITE = [0, 30, 55, 80];
 const KANONEN_INTERVALL_MS = 2000;
-const BASIS_HP_GRUND = 1000;
+const BASIS_HP_GRUND = 1800;
 const TICK_MS = 50;
+const SPIELER_BASIS_X = 3;
+const GEGNER_BASIS_X = 97;
+const ANZAHL_PFADE = 5;
 
 let wurmIdZaehler = 1;
 let fallIdZaehler = 1;
@@ -88,11 +96,12 @@ function baueWurm(
   return {
     id: wurmIdZaehler++,
     seite,
-    x: seite === "spieler" ? 10 : 90,
-    kopfHp: 100,
-    kopfMax: 100,
-    schwanzHp: 50,
-    schwanzMax: 50,
+    x: seite === "spieler" ? -2 : 102,
+    pfad: Math.floor(Math.random() * ANZAHL_PFADE),
+    kopfHp: 80,
+    kopfMax: 80,
+    schwanzHp: 40,
+    schwanzMax: 40,
     segmente,
     sterbend: false,
     todStart: 0,
@@ -126,7 +135,7 @@ function kettenhemdReduktion(w: Wurm): number {
 }
 
 function nahkampfSchaden(w: Wurm): number {
-  let s = 10;
+  let s = 4;
   for (const seg of w.segmente) {
     const def = SEGMENTE[seg.key];
     if (def.nahkampfBonus) s += def.nahkampfBonus[seg.stufe - 1];
@@ -161,24 +170,50 @@ function schadenAnWurm(w: Wurm, schaden: number, jetzt: number): boolean {
   return false;
 }
 
-function zufallsWurmGegner(upgrades: GespeicherterFortschritt["upgrades"]): Wurm {
-  const anzahl = 1 + Math.floor(Math.random() * 6);
+function zufallsWurmGegner(
+  upgrades: GespeicherterFortschritt["upgrades"],
+  level: number,
+): Wurm {
+  // Segmentanzahl skaliert mit Level: niedrige Level kleine Wuermer, hohe Level dicke
+  const minAnz = Math.max(1, Math.min(4, Math.floor(level / 12) + 1));
+  const maxAnz = Math.max(minAnz, Math.min(6, 2 + Math.floor(level / 8)));
+  const anzahl = minAnz + Math.floor(Math.random() * (maxAnz - minAnz + 1));
+
+  // Mit steigendem Level höhere Wahrscheinlichkeit für hochwertige Segmente
+  // (laser, kastanie, raketenwerfer, panzer, kettenhemd) und höhere Stufen.
+  const billig: SegmentKey[] = ["beine", "schallpistole"];
+  const mittel: SegmentKey[] = ["kettenhemd", "heilung", "schallpistole", "kastanie"];
+  const stark: SegmentKey[] = ["panzer", "laser", "raketenwerfer"];
   const segmente: Segment[] = [];
   for (let i = 0; i < anzahl; i++) {
-    const key = SEGMENT_REIHENFOLGE[Math.floor(Math.random() * SEGMENT_REIHENFOLGE.length)];
-    const stufe = 1 + Math.floor(Math.random() * 3);
+    const r = Math.random();
+    const starkChance = Math.min(0.7, 0.1 + level * 0.015);
+    const mittelChance = Math.min(0.5, 0.2 + level * 0.01);
+    let pool: SegmentKey[];
+    if (r < starkChance) pool = stark;
+    else if (r < starkChance + mittelChance) pool = mittel;
+    else pool = billig;
+    const key = pool[Math.floor(Math.random() * pool.length)];
+    // Stufe steigt mit Level: L1-10 meist 1, L11-30 mix 1-2, L31-50 mix 2-3
+    const stufeRoll = Math.random();
+    let stufe = 1;
+    if (level >= 11) stufe = stufeRoll < 0.4 + level * 0.005 ? 2 : 1;
+    if (level >= 25) stufe = stufeRoll < 0.5 ? 3 : (stufeRoll < 0.85 ? 2 : 1);
+    if (level >= 40) stufe = stufeRoll < 0.75 ? 3 : 2;
     segmente.push(baueSegment(key, stufe));
   }
   return baueWurm("gegner", segmente, upgrades);
 }
 
-export function Spielfeld({ fortschritt, onZurueck, onSieg }: Props) {
+export function Spielfeld({ fortschritt, level, onZurueck, onSieg }: Props) {
+  const gegnerBasisMax = BASIS_HP_GRUND + level * 80;
+  const aiSpawnInterval = Math.max(4000, 14000 - level * 200);
   const [blaetter, setBlaetter] = useState(50);
   const [aiBlaetter, setAiBlaetter] = useState(50);
   const [produktionsStufe, setProduktionsStufe] = useState(0);
   const [verteidigungsStufe, setVerteidigungsStufe] = useState(0);
   const [spielerBasisHp, setSpielerBasisHp] = useState(BASIS_HP_GRUND);
-  const [gegnerBasisHp, setGegnerBasisHp] = useState(BASIS_HP_GRUND);
+  const [gegnerBasisHp, setGegnerBasisHp] = useState(gegnerBasisMax);
   const [wuermerState, setWuermerState] = useState<Wurm[]>([]);
   const [fallObjekte, setFallObjekte] = useState<FallObjekt[]>([]);
   const [matchAepfel, setMatchAepfel] = useState(0); // gefundene Äpfel im Match
@@ -246,9 +281,9 @@ export function Spielfeld({ fortschritt, onZurueck, onSieg }: Props) {
 
       // --- AI Spawn ---
       r.aiSpawn += TICK_MS;
-      if (r.aiSpawn >= 15000) {
+      if (r.aiSpawn >= aiSpawnInterval) {
         r.aiSpawn = 0;
-        const wurm = zufallsWurmGegner(fortschritt.upgrades);
+        const wurm = zufallsWurmGegner(fortschritt.upgrades, level);
         const kostenBlaetter = wurm.segmente.reduce(
           (acc, s) => acc + SEGMENTE[s.key].kosten,
           0,
@@ -282,9 +317,8 @@ export function Spielfeld({ fortschritt, onZurueck, onSieg }: Props) {
           }
         }
 
-        // Ziel finden: nächster Gegner-Wurm oder gegnerische Basis
+        // Ziel finden: nächster Gegner-Wurm oder gegnerische Basis (lanes egal)
         const gegner = lebendig.filter((g) => g.seite !== w.seite);
-        let zielX = w.seite === "spieler" ? 100 : 0;
         let zielWurm: Wurm | null = null;
         let minDist = Infinity;
         for (const g of gegner) {
@@ -292,34 +326,44 @@ export function Spielfeld({ fortschritt, onZurueck, onSieg }: Props) {
           if (d < minDist) {
             minDist = d;
             zielWurm = g;
-            zielX = g.x;
           }
         }
-        const basisDist = w.seite === "spieler" ? 100 - w.x : w.x;
+        const basisX = w.seite === "spieler" ? GEGNER_BASIS_X : SPIELER_BASIS_X;
+        const basisDist = Math.abs(basisX - w.x);
         if (!zielWurm) minDist = basisDist;
 
-        // Bewegung
+        // Bewegung: Wuermer blockieren sich NICHT. Sie laufen immer bis zur gegn. Basis
+        // (Baum am Kartenende blockiert die Bewegung).
         const speed = wurmGeschwindigkeit(w);
         const kannBewegen = jetzt >= w.feuerStop;
         if (kannBewegen) {
-          // Stoppen bei Nahkampf-Reichweite
-          if (minDist > 3) {
+          // Stoppen nur, wenn an der gegnerischen Basis angekommen
+          if (basisDist > 3) {
             const dx = (speed * TICK_MS) / 1000;
             w.x += w.seite === "spieler" ? dx : -dx;
-            w.x = Math.max(0, Math.min(100, w.x));
+            // Baum am Kartenende blockiert
+            if (w.seite === "spieler") w.x = Math.min(GEGNER_BASIS_X, w.x);
+            else w.x = Math.max(SPIELER_BASIS_X, w.x);
           }
         }
 
-        // Nahkampf
-        if (zielWurm && Math.abs(zielWurm.x - w.x) <= 3) {
-          const dmg = (nahkampfSchaden(w) * TICK_MS) / 1000;
-          schadenAnWurm(zielWurm, dmg, jetzt);
-        } else if (!zielWurm && basisDist <= 3) {
-          // Schaden an Basis
+        // Nahkampf: an ALLE Gegner in Bissreichweite, egal welcher Pfad
+        const dmgProSek = nahkampfSchaden(w);
+        const tickDmg = (dmgProSek * TICK_MS) / 1000;
+        let hatGebissen = false;
+        for (const g of gegner) {
+          if (Math.abs(g.x - w.x) <= 3) {
+            schadenAnWurm(g, tickDmg, jetzt);
+            hatGebissen = true;
+          }
+        }
+        // Basis-Biss zusätzlich, wenn Wurm an Basis dran ist
+        if (basisDist <= 3) {
           const dmg = (nahkampfSchaden(w) * TICK_MS) / 1000;
           if (w.seite === "spieler") setGegnerBasisHp((h) => Math.max(0, h - dmg));
           else setSpielerBasisHp((h) => Math.max(0, h - dmg));
         }
+        void hatGebissen;
 
         // Fernkampf
         w.segmente.forEach((s, i) => {
@@ -356,22 +400,8 @@ export function Spielfeld({ fortschritt, onZurueck, onSieg }: Props) {
       }
 
       // Tod-Animation: pop segments alle 150ms vom Kopf nach hinten
-      for (const w of r.wuermer) {
-        if (!w.sterbend) continue;
-        const verstrichen = jetzt - w.todStart;
-        const ziel = Math.floor(verstrichen / 150);
-        // -1 = Kopf, 0..n-1 segmente, n = schwanz
-        const reihenfolge = [-1, ...w.segmente.map((_, i) => i), w.segmente.length];
-        for (let i = 0; i <= ziel && i < reihenfolge.length; i++) {
-          w.geplatzt.add(reihenfolge[i]);
-        }
-      }
-      // Entferne komplett geplatzte
-      r.wuermer = r.wuermer.filter((w) => {
-        if (!w.sterbend) return true;
-        const gesamt = w.segmente.length + 2;
-        return w.geplatzt.size < gesamt;
-      });
+      // Tote Wuermer werden komplett (Kopf + alle Segmente + Schwanz) entfernt.
+      r.wuermer = r.wuermer.filter((w) => !w.sterbend);
 
       // --- Basis-Kanonen ---
       r.spielerKanone += TICK_MS;
@@ -401,8 +431,9 @@ export function Spielfeld({ fortschritt, onZurueck, onSieg }: Props) {
       }
       if (r.gegnerKanone >= KANONEN_INTERVALL_MS) {
         r.gegnerKanone = 0;
-        // Gegner-Verteidigung skaliert mit Spielerstufe (gleichwertige Bedrohung)
-        feuereKanone("gegner", Math.max(1, verteidigungsStufe));
+        // Gegner-Verteidigung skaliert mit Level (höhere Level = härtere Abwehr)
+        const gegnerStufe = Math.min(3, 1 + Math.floor(level / 17));
+        feuereKanone("gegner", gegnerStufe);
       }
       r.kanonenBlitz = r.kanonenBlitz.filter((b) => b.bis > jetzt);
 
@@ -411,7 +442,7 @@ export function Spielfeld({ fortschritt, onZurueck, onSieg }: Props) {
       setKanonenBlitze([...r.kanonenBlitz]);
     }, TICK_MS);
     return () => window.clearInterval(handle);
-  }, [produktionsStufe, verteidigungsStufe, fortschritt.upgrades, sieg, niederlage]);
+  }, [produktionsStufe, verteidigungsStufe, fortschritt.upgrades, sieg, niederlage, level, aiSpawnInterval]);
 
   // Basis HP Anpassung an Verteidigungsstufe
   useEffect(() => {
@@ -484,8 +515,9 @@ export function Spielfeld({ fortschritt, onZurueck, onSieg }: Props) {
   };
 
   const handleSiegRueckkehr = useCallback(() => {
-    onSieg(5 + matchAepfel);
-  }, [onSieg, matchAepfel]);
+    const belohnung = Math.ceil(level / 3) + matchAepfel;
+    onSieg(belohnung);
+  }, [onSieg, matchAepfel, level]);
 
   const maxSpielerBasis = BASIS_HP_GRUND + VERTEIDIGUNG_BONUS[verteidigungsStufe];
 
@@ -500,6 +532,9 @@ export function Spielfeld({ fortschritt, onZurueck, onSieg }: Props) {
         >
           <ArrowLeft className="h-4 w-4" /> Hauptmenü
         </button>
+        <div className="rounded bg-yellow-500/20 px-2 py-1 text-xs font-bold text-yellow-200">
+          Level {level}
+        </div>
         <div className="flex items-center gap-1 rounded bg-emerald-800/50 px-2 py-1">
           <Leaf className="h-4 w-4 text-green-300" />
           <span className="text-sm font-bold">{Math.floor(blaetter)}</span>
@@ -525,7 +560,7 @@ export function Spielfeld({ fortschritt, onZurueck, onSieg }: Props) {
             <div className="h-3 w-full overflow-hidden rounded bg-red-950">
               <div
                 className="h-full bg-red-500 transition-all"
-                style={{ width: `${(gegnerBasisHp / BASIS_HP_GRUND) * 100}%` }}
+                style={{ width: `${(gegnerBasisHp / gegnerBasisMax) * 100}%` }}
               />
             </div>
           </div>
@@ -554,9 +589,17 @@ export function Spielfeld({ fortschritt, onZurueck, onSieg }: Props) {
 
       {/* Kampf-Arena */}
       <div className="w-full overflow-x-auto overflow-y-hidden">
-        <div className="relative h-64 w-[400%] min-w-[1600px] bg-gradient-to-b from-sky-200 via-emerald-300 to-emerald-500">
+        <div className="relative h-72 w-[400%] min-w-[1600px] bg-gradient-to-b from-sky-200 via-emerald-300 to-emerald-500">
         {/* Wiese */}
-        <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-b from-emerald-500 to-emerald-700" />
+        <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-b from-emerald-500 to-emerald-700" />
+        {/* 5 Pfade als sanfte Linien */}
+        {Array.from({ length: ANZAHL_PFADE }, (_, i) => (
+          <div
+            key={i}
+            className="absolute inset-x-0 border-t border-emerald-900/15"
+            style={{ bottom: `${20 + i * 14}px` }}
+          />
+        ))}
 
         {/* Spieler Baum links */}
         <Baum seite="links" name={fortschritt.spielerName} farbe="emerald" />
@@ -617,7 +660,7 @@ export function Spielfeld({ fortschritt, onZurueck, onSieg }: Props) {
               className="group relative"
               title={`${SEGMENTE[s.key].name} entfernen`}
             >
-              <SegmentSymbol farbe={segmentFarbe(s.key)} />
+              <SegmentSymbolMitIcon keyName={s.key} />
               <span className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-[10px] font-semibold text-emerald-900 opacity-0 group-hover:opacity-100">
                 ✕
               </span>
@@ -642,7 +685,7 @@ export function Spielfeld({ fortschritt, onZurueck, onSieg }: Props) {
                 disabled={gesperrt}
                 className="flex flex-col items-center rounded border-2 border-emerald-700 bg-emerald-50 p-2 text-xs hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <SegmentSymbol farbe={segmentFarbe(key)} />
+                <SegmentSymbolMitIcon keyName={key} />
                 <span className="mt-1 font-bold">{def.name}</span>
                 <span className="text-[10px] text-emerald-700">Stufe {stufe}</span>
                 <span className="text-[10px] text-emerald-900">{def.kosten} Bl.</span>
@@ -697,16 +740,35 @@ function segmentFarbe(key: SegmentKey): string {
   return map[key];
 }
 
+function SegmentIcon({ keyName, className }: { keyName: SegmentKey; className?: string }) {
+  const cls = className ?? "h-5 w-5 text-white drop-shadow";
+  switch (keyName) {
+    case "beine": return <Footprints className={cls} />;
+    case "panzer": return <Shield className={cls} />;
+    case "kettenhemd": return <LinkIcon className={cls} />;
+    case "heilung": return <HeartPulse className={cls} />;
+    case "schallpistole": return <Volume2 className={cls} />;
+    case "laser": return <Zap className={cls} />;
+    case "kastanie": return <Bomb className={cls} />;
+    case "raketenwerfer": return <Rocket className={cls} />;
+  }
+}
+
 function Baum({ seite, name, farbe }: { seite: "links" | "rechts"; name: string; farbe: "emerald" | "rose" }) {
   const pos = seite === "links" ? "left-0" : "right-0";
   const krone = farbe === "emerald" ? "bg-emerald-700" : "bg-rose-700";
+  const kroneHell = farbe === "emerald" ? "bg-emerald-500" : "bg-rose-500";
   return (
-    <div className={`absolute bottom-0 ${pos} flex w-24 flex-col items-center`}>
-      <div className={`h-24 w-24 rounded-full ${krone} shadow-lg`} />
-      <div className="-mt-4 h-20 w-8 bg-amber-900">
-        <div className="mx-auto mt-8 h-10 w-5 rounded-t-full bg-emerald-950" />
+    <div className={`absolute bottom-0 ${pos} z-20 flex w-28 flex-col items-center`}>
+      <div className="relative">
+        <div className={`h-28 w-28 rounded-full ${krone} shadow-2xl ring-4 ring-emerald-900/40`} />
+        <div className={`absolute left-3 top-3 h-8 w-8 rounded-full ${kroneHell} opacity-60`} />
+        <div className={`absolute right-4 top-6 h-5 w-5 rounded-full ${kroneHell} opacity-60`} />
       </div>
-      <div className="absolute -top-2 rounded bg-emerald-950 px-2 py-0.5 text-[10px] font-bold text-white">
+      <div className="-mt-6 h-24 w-10 rounded bg-gradient-to-b from-amber-800 to-amber-950 shadow-inner">
+        <div className="mx-auto mt-10 h-12 w-6 rounded-t-full bg-amber-950" />
+      </div>
+      <div className="absolute -top-3 rounded bg-emerald-950 px-2 py-0.5 text-[10px] font-bold text-white shadow">
         {name}
       </div>
     </div>
@@ -715,18 +777,25 @@ function Baum({ seite, name, farbe }: { seite: "links" | "rechts"; name: string;
 
 function KopfSymbol({ farbe }: { farbe: string }) {
   return (
-    <div className="relative h-10 w-10 rounded-full bg-emerald-600 ring-2 ring-emerald-900">
-      <div className={`absolute -top-2 left-1 h-3 w-8 rounded-md ${farbe} shadow`} />
-      <div className="absolute left-2 top-3 h-1.5 w-1.5 rounded-full bg-white" />
-      <div className="absolute right-2 top-3 h-1.5 w-1.5 rounded-full bg-white" />
+    <div className="relative h-10 w-10 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-700 ring-2 ring-emerald-900 shadow-md">
+      <div className={`absolute -top-2 left-0.5 h-3 w-9 rounded-md ${farbe} shadow`} />
+      <Smile className="absolute inset-0 m-auto h-6 w-6 text-emerald-950" />
     </div>
   );
 }
-function SegmentSymbol({ farbe }: { farbe: string }) {
-  return <div className={`h-10 w-10 rounded-full ${farbe} ring-2 ring-emerald-900`} />;
+function SegmentSymbolMitIcon({ keyName }: { keyName: SegmentKey }) {
+  return (
+    <div className={`relative flex h-10 w-10 items-center justify-center rounded-full ${segmentFarbe(keyName)} ring-2 ring-emerald-900 shadow`}>
+      <SegmentIcon keyName={keyName} />
+    </div>
+  );
 }
 function SchwanzSymbol() {
-  return <div className="h-8 w-8 rounded-full bg-emerald-700 ring-2 ring-emerald-900" />;
+  return (
+    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-emerald-800 ring-2 ring-emerald-900 shadow">
+      <Leaf className="h-4 w-4 -rotate-45 text-emerald-100" fill="currentColor" />
+    </div>
+  );
 }
 
 function WurmAnzeige({ wurm }: { wurm: Wurm }) {
@@ -734,52 +803,58 @@ function WurmAnzeige({ wurm }: { wurm: Wurm }) {
   const flash = jetzt < wurm.flashBis;
   const baretFarbe = wurm.seite === "spieler" ? "bg-blue-600" : "bg-red-600";
 
-  // Segment-Reihenfolge: Kopf(-1), 0..n-1, Schwanz(n)
-  const teile: Array<{ id: number; farbe: string; typ: "kopf" | "segment" | "schwanz" }> = [
-    { id: -1, farbe: "bg-emerald-600", typ: "kopf" },
-    ...wurm.segmente.map((s, i) => ({ id: i, farbe: segmentFarbe(s.key), typ: "segment" as const })),
-    { id: wurm.segmente.length, farbe: "bg-emerald-700", typ: "schwanz" as const },
+  type Teil =
+    | { id: number; typ: "kopf" }
+    | { id: number; typ: "segment"; key: SegmentKey; stufe: number }
+    | { id: number; typ: "schwanz" };
+  const teile: Teil[] = [
+    { id: -1, typ: "kopf" },
+    ...wurm.segmente.map((s, i) => ({ id: i, typ: "segment" as const, key: s.key, stufe: s.stufe })),
+    { id: wurm.segmente.length, typ: "schwanz" as const },
   ];
 
-  // Positionierung: Kopf zeigt in Bewegungsrichtung.
-  // Spieler läuft nach rechts → Kopf rechts; Gegner läuft nach links → Kopf links.
   const kopfRechts = wurm.seite === "spieler";
+  const laneOffset = 20 + wurm.pfad * 14; // px
   return (
     <div
-      className="absolute bottom-6"
-      style={{ left: `${wurm.x}%`, transform: "translateX(-50%)" }}
+      className="absolute"
+      style={{ left: `${wurm.x}%`, bottom: `${laneOffset}px`, transform: "translateX(-50%)" }}
     >
       <div className="flex items-end gap-0.5">
         {(kopfRechts ? [...teile].reverse() : teile).map((t, i) => {
           const pulse = flash ? "ring-4 ring-red-500" : "";
           const baseScale = "transition-all duration-300";
-          const platzAnim = wurm.sterbend && wurm.geplatzt.has(t.id)
-            ? "scale-125 opacity-0 -translate-y-4"
-            : "";
+          const platzAnim = wurm.sterbend ? "scale-125 opacity-0 -translate-y-4" : "";
           if (t.typ === "kopf") {
             return (
               <div key={i} className={`relative ${baseScale} ${platzAnim}`}>
-                <div className={`h-10 w-10 rounded-full bg-emerald-600 ring-2 ring-emerald-900 ${pulse}`}>
+                <div className={`relative h-10 w-10 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-700 ring-2 ring-emerald-900 shadow ${pulse}`}>
                   <div className={`absolute -top-2 left-1 h-3 w-8 rounded-md ${baretFarbe} shadow`} />
-                  <div className="absolute left-2 top-3 h-1.5 w-1.5 rounded-full bg-white" />
-                  <div className="absolute right-2 top-3 h-1.5 w-1.5 rounded-full bg-white" />
+                  <Smile className="absolute inset-0 m-auto h-6 w-6 text-emerald-950" />
                 </div>
               </div>
             );
           }
           if (t.typ === "schwanz") {
             return (
-              <div
-                key={i}
-                className={`h-8 w-8 rounded-full bg-emerald-700 ring-2 ring-emerald-900 ${baseScale} ${platzAnim} ${pulse}`}
-              />
+              <div key={i} className={`${baseScale} ${platzAnim}`}>
+                <div className={`flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-emerald-800 ring-2 ring-emerald-900 shadow ${pulse}`}>
+                  <Leaf className="h-4 w-4 -rotate-45 text-emerald-100" fill="currentColor" />
+                </div>
+              </div>
             );
           }
           return (
-            <div
-              key={i}
-              className={`h-10 w-10 rounded-full ${t.farbe} ring-2 ring-emerald-900 ${baseScale} ${platzAnim} ${pulse}`}
-            />
+            <div key={i} className={`${baseScale} ${platzAnim}`}>
+              <div className={`relative flex h-10 w-10 items-center justify-center rounded-full ${segmentFarbe(t.key)} ring-2 ring-emerald-900 shadow ${pulse}`}>
+                <SegmentIcon keyName={t.key} />
+                {t.stufe > 1 && (
+                  <span className="absolute -bottom-1 -right-1 rounded-full bg-yellow-300 px-1 text-[8px] font-bold text-emerald-950 ring-1 ring-emerald-900">
+                    {t.stufe}
+                  </span>
+                )}
+              </div>
+            </div>
           );
         })}
       </div>

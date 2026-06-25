@@ -22,9 +22,11 @@ export const Route = createFileRoute("/")({
 
 function Index() {
   const [bildschirm, setBildschirm] = useState<"hauptmenue" | "spielfeld">("hauptmenue");
+  const [level, setLevel] = useState(1);
   const [fortschritt, setFortschritt] = useState<GespeicherterFortschritt>(() => ({
     spielerName: "Spieler",
     aepfel: 5,
+    maxLevel: 1,
     upgrades: {
       beine: 1,
       panzer: 1,
@@ -50,9 +52,14 @@ function Index() {
     return (
       <Spielfeld
         fortschritt={fortschritt}
+        level={level}
         onZurueck={() => setBildschirm("hauptmenue")}
         onSieg={(zusatz) => {
-          const neu = { ...fortschritt, aepfel: fortschritt.aepfel + zusatz };
+          const neu = {
+            ...fortschritt,
+            aepfel: fortschritt.aepfel + zusatz,
+            maxLevel: Math.max(fortschritt.maxLevel, Math.min(50, level + 1)),
+          };
           aktualisiere(neu);
           setBildschirm("hauptmenue");
         }}
@@ -63,7 +70,10 @@ function Index() {
     <Hauptmenue
       fortschritt={fortschritt}
       onAenderung={aktualisiere}
-      onStart={() => setBildschirm("spielfeld")}
+      onStart={(lvl) => {
+        setLevel(lvl);
+        setBildschirm("spielfeld");
+      }}
     />
   );
 }
