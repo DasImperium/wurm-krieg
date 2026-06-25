@@ -21,6 +21,7 @@ interface Wurm {
   id: number;
   seite: "spieler" | "gegner";
   x: number;
+  pfad: number;
   kopfHp: number;
   kopfMax: number;
   schwanzHp: number;
