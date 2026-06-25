@@ -660,7 +660,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg }: Props) {
               className="group relative"
               title={`${SEGMENTE[s.key].name} entfernen`}
             >
-              <SegmentSymbol farbe={segmentFarbe(s.key)} />
+              <SegmentSymbolMitIcon keyName={s.key} />
               <span className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-[10px] font-semibold text-emerald-900 opacity-0 group-hover:opacity-100">
                 ✕
               </span>
@@ -685,7 +685,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg }: Props) {
                 disabled={gesperrt}
                 className="flex flex-col items-center rounded border-2 border-emerald-700 bg-emerald-50 p-2 text-xs hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <SegmentSymbol farbe={segmentFarbe(key)} />
+                <SegmentSymbolMitIcon keyName={key} />
                 <span className="mt-1 font-bold">{def.name}</span>
                 <span className="text-[10px] text-emerald-700">Stufe {stufe}</span>
                 <span className="text-[10px] text-emerald-900">{def.kosten} Bl.</span>
