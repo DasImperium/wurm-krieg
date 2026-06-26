@@ -9,6 +9,7 @@ import {
   type GespeicherterFortschritt,
   type SegmentKey,
 } from "@/lib/game/segments";
+import { SternanisIcon } from "./Sternanis";
 
 interface Segment {
   key: SegmentKey;
@@ -35,6 +36,7 @@ interface Wurm {
   feuerStop: number;
   heilTimer: number;
   munition: Record<string, number>;
+  knockbackBis: number; // ms timestamp bis wann Bewegung blockiert
 }
 
 interface FallObjekt {
@@ -45,11 +47,29 @@ interface FallObjekt {
   geschwindigkeit: number;
 }
 
+interface Mine {
+  id: number;
+  seite: "spieler" | "gegner";
+  x: number;
+  pfad: number;
+  schaden: number;
+}
+
+interface WaffenEffekt {
+  id: number;
+  art: "laser" | "rakete" | "schall";
+  x1: number; x2: number;
+  bottom: number;
+  bis: number;
+  seite: "spieler" | "gegner";
+}
+
 interface Props {
   fortschritt: GespeicherterFortschritt;
-  level: number;
+  level: number; // 0 = prozedural
   onZurueck: () => void;
-  onSieg: (zusatzAepfel: number) => void;
+  onSieg: (zusatzAepfel: number, zusatzSternanis: number) => void;
+  onNiederlage: () => void;
 }
 
 const PRODUKTION_KOSTEN = [100, 350, 800];
@@ -67,6 +87,8 @@ const ANZAHL_PFADE = 5;
 
 let wurmIdZaehler = 1;
 let fallIdZaehler = 1;
+let mineIdZaehler = 1;
+let effektIdZaehler = 1;
 
 function baueSegment(key: SegmentKey, stufe: number): Segment {
   const def = SEGMENTE[key];
@@ -111,6 +133,7 @@ function baueWurm(
     feuerStop: 0,
     heilTimer: 5000,
     munition,
+    knockbackBis: 0,
   };
 }
 
@@ -148,6 +171,10 @@ function schadenAnWurm(w: Wurm, schaden: number, jetzt: number): boolean {
   if (w.sterbend) return true;
   const reduziert = schaden * (1 - kettenhemdReduktion(w) / 100);
   w.flashBis = jetzt + 150;
+  // Knockback: 300ms blockierte Bewegung, kleiner Rückstoß
+  w.knockbackBis = jetzt + 300;
+  const kb = 0.8;
+  w.x += w.seite === "spieler" ? -kb : kb;
   // front->back: head, seg0..segn-1, tail
   if (w.kopfHp > 0) {
     w.kopfHp -= reduziert;
@@ -173,10 +200,14 @@ function schadenAnWurm(w: Wurm, schaden: number, jetzt: number): boolean {
 function zufallsWurmGegner(
   upgrades: GespeicherterFortschritt["upgrades"],
   level: number,
+  prozeduralWlr?: number,
 ): Wurm {
-  // Segmentanzahl skaliert mit Level: niedrige Level kleine Wuermer, hohe Level dicke
-  const minAnz = Math.max(1, Math.min(4, Math.floor(level / 12) + 1));
-  const maxAnz = Math.max(minAnz, Math.min(6, 2 + Math.floor(level / 8)));
+  // Prozedural: effektives Level steigt mit WLR
+  const effLevel = prozeduralWlr !== undefined
+    ? Math.max(1, Math.min(100, Math.floor(8 + prozeduralWlr * 50)))
+    : level;
+  const minAnz = Math.max(1, Math.min(5, Math.floor(effLevel / 18) + 1));
+  const maxAnz = Math.max(minAnz, Math.min(6, 2 + Math.floor(effLevel / 14)));
   const anzahl = minAnz + Math.floor(Math.random() * (maxAnz - minAnz + 1));
 
   // Mit steigendem Level höhere Wahrscheinlichkeit für hochwertige Segmente
@@ -187,27 +218,47 @@ function zufallsWurmGegner(
   const segmente: Segment[] = [];
   for (let i = 0; i < anzahl; i++) {
     const r = Math.random();
-    const starkChance = Math.min(0.7, 0.1 + level * 0.015);
-    const mittelChance = Math.min(0.5, 0.2 + level * 0.01);
+    const starkChance = Math.min(0.75, 0.05 + effLevel * 0.009);
+    const mittelChance = Math.min(0.5, 0.15 + effLevel * 0.006);
     let pool: SegmentKey[];
     if (r < starkChance) pool = stark;
     else if (r < starkChance + mittelChance) pool = mittel;
     else pool = billig;
     const key = pool[Math.floor(Math.random() * pool.length)];
-    // Stufe steigt mit Level: L1-10 meist 1, L11-30 mix 1-2, L31-50 mix 2-3
-    const stufeRoll = Math.random();
+    // Spec-Skalierung:
+    //   L1-8: nur Stufe 1
+    //   L9-50: vereinzelt Stufe 2 (zunehmend bis L50)
+    //   L51-74: Stufe 3, vereinzelt Stufe 4
+    //   L75-100: Stufe 4 normal, vereinzelt Stufe 5
+    const sr = Math.random();
     let stufe = 1;
-    if (level >= 11) stufe = stufeRoll < 0.4 + level * 0.005 ? 2 : 1;
-    if (level >= 25) stufe = stufeRoll < 0.5 ? 3 : (stufeRoll < 0.85 ? 2 : 1);
-    if (level >= 40) stufe = stufeRoll < 0.75 ? 3 : 2;
+    if (effLevel >= 9 && effLevel <= 50) {
+      const p2 = (effLevel - 8) / 42 * 0.5;
+      if (sr < p2) stufe = 2;
+    } else if (effLevel >= 51 && effLevel <= 74) {
+      if (sr < 0.15) stufe = 4;
+      else if (sr < 0.55) stufe = 3;
+      else stufe = 2;
+    } else if (effLevel >= 75) {
+      if (sr < 0.2) stufe = 5;
+      else if (sr < 0.6) stufe = 4;
+      else stufe = 3;
+    }
+    // Forschung deckelt
+    stufe = Math.min(stufe, upgrades[key] !== undefined ? 5 : stufe);
     segmente.push(baueSegment(key, stufe));
   }
   return baueWurm("gegner", segmente, upgrades);
 }
 
-export function Spielfeld({ fortschritt, level, onZurueck, onSieg }: Props) {
-  const gegnerBasisMax = BASIS_HP_GRUND + level * 80;
-  const aiSpawnInterval = Math.max(4000, 14000 - level * 200);
+export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage }: Props) {
+  const istProzedural = level === 0;
+  const wlr = istProzedural
+    ? (fortschritt.siege + 1) / (fortschritt.niederlagen + 1)
+    : 1;
+  const effLevel = istProzedural ? Math.max(1, Math.min(100, Math.floor(8 + Math.min(2, wlr) * 25))) : level;
+  const gegnerBasisMax = BASIS_HP_GRUND + effLevel * 70;
+  const aiSpawnInterval = Math.max(3500, 14000 - effLevel * 110);
   const [blaetter, setBlaetter] = useState(50);
   const [aiBlaetter, setAiBlaetter] = useState(50);
   const [produktionsStufe, setProduktionsStufe] = useState(0);
@@ -217,6 +268,9 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg }: Props) {
   const [wuermerState, setWuermerState] = useState<Wurm[]>([]);
   const [fallObjekte, setFallObjekte] = useState<FallObjekt[]>([]);
   const [matchAepfel, setMatchAepfel] = useState(0); // gefundene Äpfel im Match
+  const [matchSternanis, setMatchSternanis] = useState(0);
+  const [minen, setMinen] = useState<Mine[]>([]);
+  const [effekte, setEffekte] = useState<WaffenEffekt[]>([]);
   const [bauSegmente, setBauSegmente] = useState<Segment[]>([]);
   const [sieg, setSieg] = useState(false);
   const [niederlage, setNiederlage] = useState(false);
@@ -224,6 +278,9 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg }: Props) {
   const refs = useRef({
     wuermer: [] as Wurm[],
     fall: [] as FallObjekt[],
+    minen: [] as Mine[],
+    effekte: [] as WaffenEffekt[],
+    niederlageGemeldet: false,
     letzteBlatt: 0,
     letzterApfelCheck: 0,
     aiSpawn: 0,
@@ -283,7 +340,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg }: Props) {
       r.aiSpawn += TICK_MS;
       if (r.aiSpawn >= aiSpawnInterval) {
         r.aiSpawn = 0;
-        const wurm = zufallsWurmGegner(fortschritt.upgrades, level);
+        const wurm = zufallsWurmGegner(fortschritt.upgrades, effLevel, istProzedural ? wlr : undefined);
         const kostenBlaetter = wurm.segmente.reduce(
           (acc, s) => acc + SEGMENTE[s.key].kosten,
           0,
@@ -335,10 +392,16 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg }: Props) {
         // Bewegung: Wuermer blockieren sich NICHT. Sie laufen immer bis zur gegn. Basis
         // (Baum am Kartenende blockiert die Bewegung).
         const speed = wurmGeschwindigkeit(w);
-        const kannBewegen = jetzt >= w.feuerStop;
+        const kannBewegen = jetzt >= w.feuerStop && jetzt >= w.knockbackBis;
+        // Head-Collision: nächster feindlicher Wurm direkt vor uns?
+        let blockiert = false;
+        for (const g of gegner) {
+          const vorne = w.seite === "spieler" ? g.x - w.x : w.x - g.x;
+          if (vorne > 0 && vorne <= 4) { blockiert = true; break; }
+        }
         if (kannBewegen) {
-          // Stoppen nur, wenn an der gegnerischen Basis angekommen
-          if (basisDist > 3) {
+          // Stoppen, wenn an gegnerischer Basis ODER feindlicher Wurm vor dem Kopf
+          if (basisDist > 3 && !blockiert) {
             const dx = (speed * TICK_MS) / 1000;
             w.x += w.seite === "spieler" ? dx : -dx;
             // Baum am Kartenende blockiert
@@ -358,7 +421,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg }: Props) {
           }
         }
         // Basis-Biss zusätzlich, wenn Wurm an Basis dran ist
-        if (basisDist <= 3) {
+        if (basisDist <= 3 && jetzt >= w.knockbackBis) {
           const dmg = (nahkampfSchaden(w) * TICK_MS) / 1000;
           if (w.seite === "spieler") setGegnerBasisHp((h) => Math.max(0, h - dmg));
           else setSpielerBasisHp((h) => Math.max(0, h - dmg));
@@ -377,7 +440,18 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg }: Props) {
           if (fk.munition !== undefined) {
             if ((w.munition[key] ?? 0) <= 0) return;
           }
-          // Zielreichweite
+          // Kastanien sind Minen — legen sie direkt am eigenen Kopf ab und brechen ab
+          if (s.key === "kastanie") {
+            if ((w.munition[key] ?? 0) <= 0) return;
+            w.feuerTimer[key] = fk.intervallMs;
+            w.munition[key] = (w.munition[key] ?? 0) - 1;
+            r.minen.push({
+              id: mineIdZaehler++, seite: w.seite, x: w.x, pfad: w.pfad,
+              schaden: fk.schaden[Math.min(s.stufe - 1, fk.schaden.length - 1)],
+            });
+            return;
+          }
+          // Reichweite ab Kopf
           if (!zielWurm) {
             if (basisDist > fk.reichweite) return;
           } else if (Math.abs(zielWurm.x - w.x) > fk.reichweite) return;
@@ -386,8 +460,18 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg }: Props) {
           w.feuerTimer[key] = fk.intervallMs;
           w.feuerStop = jetzt + 500;
           if (fk.munition !== undefined) w.munition[key] = (w.munition[key] ?? 0) - 1;
-          const schadenWert = fk.schaden[s.stufe - 1];
+          const schadenWert = fk.schaden[Math.min(s.stufe - 1, fk.schaden.length - 1)];
           const schuesse = fk.anzahl ?? 1;
+          // Optischer Effekt
+          const zielX = zielWurm ? zielWurm.x : (w.seite === "spieler" ? GEGNER_BASIS_X : SPIELER_BASIS_X);
+          r.effekte.push({
+            id: effektIdZaehler++,
+            art: s.key === "laser" ? "laser" : s.key === "raketenwerfer" ? "rakete" : "schall",
+            x1: w.x, x2: zielX,
+            bottom: 20 + w.pfad * 14 + 18,
+            bis: jetzt + 250,
+            seite: w.seite,
+          });
           for (let n = 0; n < schuesse; n++) {
             if (zielWurm) {
               schadenAnWurm(zielWurm, schadenWert, jetzt);
@@ -398,6 +482,21 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg }: Props) {
           }
         });
       }
+
+      // --- Minen-Trigger ---
+      r.minen = r.minen.filter((m) => {
+        const feind = lebendig.find((w) => w.seite !== m.seite && Math.abs(w.x - m.x) <= 2);
+        if (feind) {
+          schadenAnWurm(feind, m.schaden, jetzt);
+          r.effekte.push({
+            id: effektIdZaehler++, art: "rakete",
+            x1: m.x, x2: m.x, bottom: 20 + m.pfad * 14, bis: jetzt + 250, seite: m.seite,
+          });
+          return false;
+        }
+        return true;
+      });
+      r.effekte = r.effekte.filter((e) => e.bis > jetzt);
 
       // Tod-Animation: pop segments alle 150ms vom Kopf nach hinten
       // Tote Wuermer werden komplett (Kopf + alle Segmente + Schwanz) entfernt.
@@ -440,9 +539,11 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg }: Props) {
       setWuermerState([...r.wuermer]);
       setFallObjekte([...r.fall]);
       setKanonenBlitze([...r.kanonenBlitz]);
+      setMinen([...r.minen]);
+      setEffekte([...r.effekte]);
     }, TICK_MS);
     return () => window.clearInterval(handle);
-  }, [produktionsStufe, verteidigungsStufe, fortschritt.upgrades, sieg, niederlage, level, aiSpawnInterval]);
+  }, [produktionsStufe, verteidigungsStufe, fortschritt.upgrades, sieg, niederlage, level, aiSpawnInterval, effLevel, istProzedural, wlr]);
 
   // Basis HP Anpassung an Verteidigungsstufe
   useEffect(() => {
@@ -458,8 +559,14 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg }: Props) {
     }
   }, [gegnerBasisHp, sieg]);
   useEffect(() => {
-    if (spielerBasisHp <= 0 && !niederlage) setNiederlage(true);
-  }, [spielerBasisHp, niederlage]);
+    if (spielerBasisHp <= 0 && !niederlage) {
+      setNiederlage(true);
+      if (!refs.current.niederlageGemeldet) {
+        refs.current.niederlageGemeldet = true;
+        onNiederlage();
+      }
+    }
+  }, [spielerBasisHp, niederlage, onNiederlage]);
 
   const sammleFall = (id: number) => {
     const obj = refs.current.fall.find((o) => o.id === id);
@@ -515,39 +622,42 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg }: Props) {
   };
 
   const handleSiegRueckkehr = useCallback(() => {
-    const belohnung = Math.ceil(level / 3) + matchAepfel;
-    onSieg(belohnung);
-  }, [onSieg, matchAepfel, level]);
+    const belohnung = Math.ceil(effLevel / 3) + matchAepfel;
+    // Bonus-Sternanis bei höheren Levels selten
+    const sternBonus = matchSternanis + (effLevel >= 30 ? (Math.random() < 0.4 ? 1 : 0) : 0);
+    onSieg(belohnung, sternBonus);
+  }, [onSieg, matchAepfel, matchSternanis, effLevel]);
 
   const maxSpielerBasis = BASIS_HP_GRUND + VERTEIDIGUNG_BONUS[verteidigungsStufe];
 
   return (
     <div className="min-h-screen w-full bg-gradient-to-b from-sky-300 via-sky-200 to-emerald-200 text-emerald-950">
       {/* Obere Leiste */}
-      <div className="flex flex-wrap items-center gap-3 border-b border-emerald-700/30 bg-emerald-950 px-4 py-2 text-white">
+      <div className="sticky top-0 z-40 flex flex-wrap items-center gap-1.5 border-b border-emerald-700/30 bg-emerald-950 px-2 py-1.5 text-white sm:gap-3 sm:px-4 sm:py-2">
         <button
           type="button"
           onClick={onZurueck}
           className="flex items-center gap-1 rounded bg-emerald-800 px-2 py-1 text-xs hover:bg-emerald-700"
         >
-          <ArrowLeft className="h-4 w-4" /> Hauptmenü
+          <ArrowLeft className="h-3 w-3 sm:h-4 sm:w-4" /> <span className="hidden sm:inline">Hauptmenü</span>
         </button>
-        <div className="rounded bg-yellow-500/20 px-2 py-1 text-xs font-bold text-yellow-200">
-          Level {level}
+        <div className="rounded bg-yellow-500/20 px-2 py-1 text-[10px] font-bold text-yellow-200 sm:text-xs">
+          {istProzedural ? "Prozedural" : `L ${level}`}
         </div>
-        <div className="flex items-center gap-1 rounded bg-emerald-800/50 px-2 py-1">
-          <Leaf className="h-4 w-4 text-green-300" />
-          <span className="text-sm font-bold">{Math.floor(blaetter)}</span>
-          <span className="text-xs text-emerald-200">Blätter</span>
+        <div className="flex items-center gap-1 rounded bg-emerald-800/50 px-1.5 py-1">
+          <Leaf className="h-3 w-3 text-green-300 sm:h-4 sm:w-4" />
+          <span className="text-xs font-bold sm:text-sm">{Math.floor(blaetter)}</span>
         </div>
-        <div className="flex items-center gap-1 rounded bg-red-950/40 px-2 py-1">
-          <Apple className="h-4 w-4 text-red-600" fill="#DC2626" />
-          <span className="text-sm font-bold text-red-600">{matchAepfel}</span>
-          <span className="text-xs text-red-300">Rote Äpfel</span>
+        <div className="flex items-center gap-1 rounded bg-red-950/40 px-1.5 py-1">
+          <Apple className="h-3 w-3 text-red-500 sm:h-4 sm:w-4" fill="#DC2626" />
+          <span className="text-xs font-bold text-red-300 sm:text-sm">{matchAepfel}</span>
         </div>
-        <div className="flex flex-1 items-center gap-3 px-2">
+        <div className="flex items-center gap-1 rounded bg-amber-950/40 px-1.5 py-1">
+          <SternanisIcon className="h-3 w-3 text-amber-300 sm:h-4 sm:w-4" />
+          <span className="text-xs font-bold text-amber-200 sm:text-sm">{matchSternanis}</span>
+        </div>
+        <div className="flex w-full items-center gap-2 sm:w-auto sm:flex-1 sm:px-2">
           <div className="flex-1">
-            <div className="text-xs">{fortschritt.spielerName} Basis</div>
             <div className="h-3 w-full overflow-hidden rounded bg-emerald-900">
               <div
                 className="h-full bg-emerald-400 transition-all"
@@ -556,7 +666,6 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg }: Props) {
             </div>
           </div>
           <div className="flex-1">
-            <div className="text-xs">Gegner Basis</div>
             <div className="h-3 w-full overflow-hidden rounded bg-red-950">
               <div
                 className="h-full bg-red-500 transition-all"
@@ -569,27 +678,25 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg }: Props) {
           type="button"
           onClick={upgradeProduktion}
           disabled={produktionsStufe >= 3 || blaetter < (PRODUKTION_KOSTEN[produktionsStufe] ?? Infinity)}
-          className="flex items-center gap-1 rounded bg-green-700 px-2 py-1 text-xs font-bold hover:bg-green-600 disabled:bg-emerald-800/40 disabled:text-emerald-400"
+          className="flex items-center gap-1 rounded bg-green-700 px-1.5 py-1 text-[10px] font-bold hover:bg-green-600 disabled:bg-emerald-800/40 disabled:text-emerald-400 sm:text-xs"
         >
-          <TrendingUp className="h-4 w-4" />
-          Produktion verbessern (Stufe {produktionsStufe}/3
-          {produktionsStufe < 3 ? ` · ${PRODUKTION_KOSTEN[produktionsStufe]} Bl.` : ""})
+          <TrendingUp className="h-3 w-3 sm:h-4 sm:w-4" />
+          Prod {produktionsStufe}/3{produktionsStufe < 3 ? ` (${PRODUKTION_KOSTEN[produktionsStufe]})` : ""}
         </button>
         <button
           type="button"
           onClick={upgradeVerteidigung}
           disabled={verteidigungsStufe >= 3 || blaetter < (VERTEIDIGUNG_KOSTEN[verteidigungsStufe] ?? Infinity)}
-          className="flex items-center gap-1 rounded bg-blue-700 px-2 py-1 text-xs font-bold hover:bg-blue-600 disabled:bg-emerald-800/40 disabled:text-emerald-400"
+          className="flex items-center gap-1 rounded bg-blue-700 px-1.5 py-1 text-[10px] font-bold hover:bg-blue-600 disabled:bg-emerald-800/40 disabled:text-emerald-400 sm:text-xs"
         >
-          <Shield className="h-4 w-4" />
-          Verteidigung verbessern (Stufe {verteidigungsStufe}/3
-          {verteidigungsStufe < 3 ? ` · ${VERTEIDIGUNG_KOSTEN[verteidigungsStufe]} Bl.` : ""})
+          <Shield className="h-3 w-3 sm:h-4 sm:w-4" />
+          Vert {verteidigungsStufe}/3{verteidigungsStufe < 3 ? ` (${VERTEIDIGUNG_KOSTEN[verteidigungsStufe]})` : ""}
         </button>
       </div>
 
       {/* Kampf-Arena */}
       <div className="w-full overflow-x-auto overflow-y-hidden">
-        <div className="relative h-72 w-[400%] min-w-[1600px] bg-gradient-to-b from-sky-200 via-emerald-300 to-emerald-500">
+        <div className="relative h-64 w-[400%] min-w-[1600px] bg-gradient-to-b from-sky-200 via-emerald-300 to-emerald-500 sm:h-72">
         {/* Wiese */}
         <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-b from-emerald-500 to-emerald-700" />
         {/* 5 Pfade als sanfte Linien */}
@@ -619,6 +726,27 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg }: Props) {
             />
           );
         })}
+
+        {/* Waffen-Effekte */}
+        {effekte.map((e) => {
+          const links = Math.min(e.x1, e.x2);
+          const breite = Math.abs(e.x2 - e.x1);
+          const farbe = e.art === "laser" ? "bg-cyan-300" : e.art === "rakete" ? "bg-orange-400" : "bg-purple-300";
+          return (
+            <div key={e.id} className={`absolute h-1 ${farbe} shadow-[0_0_10px_currentColor] opacity-90`}
+              style={{ left: `${links}%`, width: `${Math.max(breite, 1)}%`, bottom: `${e.bottom}px` }} />
+          );
+        })}
+
+        {/* Minen */}
+        {minen.map((m) => (
+          <div key={m.id} className="absolute z-10 -translate-x-1/2"
+            style={{ left: `${m.x}%`, bottom: `${10 + m.pfad * 14}px` }}>
+            <div className={`flex h-5 w-5 items-center justify-center rounded-full ring-2 ring-amber-900 shadow ${m.seite === "spieler" ? "bg-red-600" : "bg-blue-600"}`}>
+              <Bomb className="h-3 w-3 text-white" />
+            </div>
+          </div>
+        ))}
 
         {/* Fall-Objekte */}
         {fallObjekte.map((o) => (
