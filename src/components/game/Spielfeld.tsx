@@ -851,7 +851,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
         <EndBildschirm
           titel="Sieg im Krieg der Wuermer!"
           farbe="from-yellow-200 to-yellow-500"
-          beschreibung={`Belohnung: +${5 + matchAepfel} Rote Äpfel.`}
+          beschreibung={`Belohnung: +${5 + matchAepfel + Math.floor(effLevel / 5)} Rote Äpfel.`}
           aktion={handleSiegRueckkehr}
           aktionLabel="Zurück zum Hauptmenü"
         />
