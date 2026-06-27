@@ -466,10 +466,10 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
             });
             return;
           }
-          // Reichweite ab Kopf
+          // Reichweite ab vorderster Kopfstelle.
           if (!zielWurm) {
             if (basisDist > fk.reichweite) return;
-          } else if (Math.abs(zielWurm.x - w.x) > fk.reichweite) return;
+          } else if (Math.abs(kopfX(zielWurm) - meinKopf) > fk.reichweite) return;
 
           // Feuern
           w.feuerTimer[key] = fk.intervallMs;
@@ -477,12 +477,12 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
           if (fk.munition !== undefined) w.munition[key] = (w.munition[key] ?? 0) - 1;
           const schadenWert = fk.schaden[Math.min(s.stufe - 1, fk.schaden.length - 1)];
           const schuesse = fk.anzahl ?? 1;
-          // Optischer Effekt
-          const zielX = zielWurm ? zielWurm.x : (w.seite === "spieler" ? GEGNER_BASIS_X : SPIELER_BASIS_X);
+          // Optischer Effekt: startet an Kopfvorderkante.
+          const zielX = zielWurm ? kopfX(zielWurm) : (w.seite === "spieler" ? GEGNER_BASIS_X : SPIELER_BASIS_X);
           r.effekte.push({
             id: effektIdZaehler++,
             art: s.key === "laser" ? "laser" : s.key === "raketenwerfer" ? "rakete" : "schall",
-            x1: w.x, x2: zielX,
+            x1: meinKopf, x2: zielX,
             bottom: 20 + w.pfad * 14 + 18,
             bis: jetzt + 250,
             seite: w.seite,
@@ -500,7 +500,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
 
       // --- Minen-Trigger ---
       r.minen = r.minen.filter((m) => {
-        const feind = lebendig.find((w) => w.seite !== m.seite && Math.abs(w.x - m.x) <= 2);
+        const feind = lebendig.find((w) => w.seite !== m.seite && Math.abs(kopfX(w) - m.x) <= 2);
         if (feind) {
           schadenAnWurm(feind, m.schaden, jetzt);
           r.effekte.push({
@@ -529,7 +529,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
         let ziel: Wurm | null = null;
         let minD = Infinity;
         for (const f of feinde) {
-          const d = Math.abs(f.x - basisX);
+          const d = Math.abs(kopfX(f) - basisX);
           if (d <= reichweite && d < minD) {
             minD = d;
             ziel = f;
@@ -537,7 +537,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
         }
         if (!ziel) return;
         schadenAnWurm(ziel, schaden, jetzt);
-        r.kanonenBlitz.push({ id: fallIdZaehler++, seite, zielX: ziel.x, bis: jetzt + 200 });
+        r.kanonenBlitz.push({ id: fallIdZaehler++, seite, zielX: kopfX(ziel), bis: jetzt + 200 });
       };
       if (r.spielerKanone >= KANONEN_INTERVALL_MS) {
         r.spielerKanone = 0;
