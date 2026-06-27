@@ -77,7 +77,7 @@ const VERTEIDIGUNG_KOSTEN = [150, 400, 800];
 const PRODUKTION_RATE = [5, 10, 20, 40];
 const VERTEIDIGUNG_BONUS = [0, 200, 500, 1000];
 const KANONEN_SCHADEN = [0, 25, 55, 100];
-const KANONEN_REICHWEITE = [0, 30, 55, 80];
+const KANONEN_REICHWEITE = [0, 12, 22, 30];
 const KANONEN_INTERVALL_MS = 2000;
 const BASIS_HP_GRUND = 1800;
 const TICK_MS = 50;
@@ -388,19 +388,20 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
           }
         }
 
-        // Ziel finden: nächster Gegner-Wurm oder gegnerische Basis (lanes egal)
+        // Ziel finden — Distanzen ab vorderster Kopfstelle.
+        const meinKopf = kopfX(w);
         const gegner = lebendig.filter((g) => g.seite !== w.seite);
         let zielWurm: Wurm | null = null;
         let minDist = Infinity;
         for (const g of gegner) {
-          const d = Math.abs(g.x - w.x);
+          const d = Math.abs(kopfX(g) - meinKopf);
           if (d < minDist) {
             minDist = d;
             zielWurm = g;
           }
         }
         const basisX = w.seite === "spieler" ? GEGNER_BASIS_X : SPIELER_BASIS_X;
-        const basisDist = Math.abs(basisX - w.x);
+        const basisDist = Math.abs(basisX - meinKopf);
         if (!zielWurm) minDist = basisDist;
 
         // Bewegung: Wuermer blockieren sich NICHT. Sie laufen immer bis zur gegn. Basis
