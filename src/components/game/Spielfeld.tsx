@@ -77,13 +77,27 @@ const VERTEIDIGUNG_KOSTEN = [150, 400, 800];
 const PRODUKTION_RATE = [5, 10, 20, 40];
 const VERTEIDIGUNG_BONUS = [0, 200, 500, 1000];
 const KANONEN_SCHADEN = [0, 25, 55, 100];
-const KANONEN_REICHWEITE = [0, 30, 55, 80];
+const KANONEN_REICHWEITE = [0, 12, 22, 30];
 const KANONEN_INTERVALL_MS = 2000;
 const BASIS_HP_GRUND = 1800;
 const TICK_MS = 50;
 const SPIELER_BASIS_X = 3;
 const GEGNER_BASIS_X = 97;
 const ANZAHL_PFADE = 5;
+
+// Geschätzte halbe Wurmlänge in % der Karte.
+function halbeWurmLaenge(w: Wurm): number {
+  return ((w.segmente.length + 2) * 2.0) / 2;
+}
+// Vorderste Stelle des Kopfes Richtung feindlicher Basis.
+function kopfX(w: Wurm): number {
+  const h = halbeWurmLaenge(w);
+  return w.seite === "spieler" ? w.x + h : w.x - h;
+}
+// Kosten steigen leicht mit Forschungsstufe.
+function segmentKosten(key: SegmentKey, stufe: number): number {
+  return Math.round(SEGMENTE[key].kosten * (1 + (stufe - 1) * 0.2));
+}
 
 let wurmIdZaehler = 1;
 let fallIdZaehler = 1;
@@ -342,7 +356,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
         r.aiSpawn = 0;
         const wurm = zufallsWurmGegner(fortschritt.upgrades, effLevel, istProzedural ? wlr : undefined);
         const kostenBlaetter = wurm.segmente.reduce(
-          (acc, s) => acc + SEGMENTE[s.key].kosten,
+          (acc, s) => acc + segmentKosten(s.key, s.stufe),
           0,
         );
         // AI muss sich leisten können
@@ -374,54 +388,55 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
           }
         }
 
-        // Ziel finden: nächster Gegner-Wurm oder gegnerische Basis (lanes egal)
+        // Ziel finden — Distanzen ab vorderster Kopfstelle.
+        const meinKopf = kopfX(w);
         const gegner = lebendig.filter((g) => g.seite !== w.seite);
         let zielWurm: Wurm | null = null;
         let minDist = Infinity;
         for (const g of gegner) {
-          const d = Math.abs(g.x - w.x);
+          const d = Math.abs(kopfX(g) - meinKopf);
           if (d < minDist) {
             minDist = d;
             zielWurm = g;
           }
         }
         const basisX = w.seite === "spieler" ? GEGNER_BASIS_X : SPIELER_BASIS_X;
-        const basisDist = Math.abs(basisX - w.x);
+        const basisDist = Math.abs(basisX - meinKopf);
         if (!zielWurm) minDist = basisDist;
 
         // Bewegung: Wuermer blockieren sich NICHT. Sie laufen immer bis zur gegn. Basis
         // (Baum am Kartenende blockiert die Bewegung).
         const speed = wurmGeschwindigkeit(w);
         const kannBewegen = jetzt >= w.feuerStop && jetzt >= w.knockbackBis;
-        // Head-Collision: nächster feindlicher Wurm direkt vor uns?
+        // Kopf-an-Kopf-Blockade: kein Überlappen mit Gegnerwürmern.
         let blockiert = false;
         for (const g of gegner) {
-          const vorne = w.seite === "spieler" ? g.x - w.x : w.x - g.x;
-          if (vorne > 0 && vorne <= 4) { blockiert = true; break; }
+          const gKopf = kopfX(g);
+          const vorne = w.seite === "spieler" ? gKopf - meinKopf : meinKopf - gKopf;
+          if (vorne > -0.5 && vorne <= 1.5) { blockiert = true; break; }
         }
         if (kannBewegen) {
-          // Stoppen, wenn an gegnerischer Basis ODER feindlicher Wurm vor dem Kopf
-          if (basisDist > 3 && !blockiert) {
+          if (basisDist > 1.5 && !blockiert) {
             const dx = (speed * TICK_MS) / 1000;
             w.x += w.seite === "spieler" ? dx : -dx;
-            // Baum am Kartenende blockiert
             if (w.seite === "spieler") w.x = Math.min(GEGNER_BASIS_X, w.x);
             else w.x = Math.max(SPIELER_BASIS_X, w.x);
           }
         }
 
-        // Nahkampf: an ALLE Gegner in Bissreichweite, egal welcher Pfad
+        // Nahkampf: nur Gegner unmittelbar vor dem Kopf.
         const dmgProSek = nahkampfSchaden(w);
         const tickDmg = (dmgProSek * TICK_MS) / 1000;
         let hatGebissen = false;
         for (const g of gegner) {
-          if (Math.abs(g.x - w.x) <= 3) {
+          const gKopf = kopfX(g);
+          const vor = w.seite === "spieler" ? gKopf - meinKopf : meinKopf - gKopf;
+          if (vor > -1 && vor <= 2) {
             schadenAnWurm(g, tickDmg, jetzt);
             hatGebissen = true;
           }
         }
-        // Basis-Biss zusätzlich, wenn Wurm an Basis dran ist
-        if (basisDist <= 3 && jetzt >= w.knockbackBis) {
+        if (basisDist <= 2 && jetzt >= w.knockbackBis) {
           const dmg = (nahkampfSchaden(w) * TICK_MS) / 1000;
           if (w.seite === "spieler") setGegnerBasisHp((h) => Math.max(0, h - dmg));
           else setSpielerBasisHp((h) => Math.max(0, h - dmg));
@@ -451,10 +466,10 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
             });
             return;
           }
-          // Reichweite ab Kopf
+          // Reichweite ab vorderster Kopfstelle.
           if (!zielWurm) {
             if (basisDist > fk.reichweite) return;
-          } else if (Math.abs(zielWurm.x - w.x) > fk.reichweite) return;
+          } else if (Math.abs(kopfX(zielWurm) - meinKopf) > fk.reichweite) return;
 
           // Feuern
           w.feuerTimer[key] = fk.intervallMs;
@@ -462,12 +477,12 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
           if (fk.munition !== undefined) w.munition[key] = (w.munition[key] ?? 0) - 1;
           const schadenWert = fk.schaden[Math.min(s.stufe - 1, fk.schaden.length - 1)];
           const schuesse = fk.anzahl ?? 1;
-          // Optischer Effekt
-          const zielX = zielWurm ? zielWurm.x : (w.seite === "spieler" ? GEGNER_BASIS_X : SPIELER_BASIS_X);
+          // Optischer Effekt: startet an Kopfvorderkante.
+          const zielX = zielWurm ? kopfX(zielWurm) : (w.seite === "spieler" ? GEGNER_BASIS_X : SPIELER_BASIS_X);
           r.effekte.push({
             id: effektIdZaehler++,
             art: s.key === "laser" ? "laser" : s.key === "raketenwerfer" ? "rakete" : "schall",
-            x1: w.x, x2: zielX,
+            x1: meinKopf, x2: zielX,
             bottom: 20 + w.pfad * 14 + 18,
             bis: jetzt + 250,
             seite: w.seite,
@@ -485,7 +500,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
 
       // --- Minen-Trigger ---
       r.minen = r.minen.filter((m) => {
-        const feind = lebendig.find((w) => w.seite !== m.seite && Math.abs(w.x - m.x) <= 2);
+        const feind = lebendig.find((w) => w.seite !== m.seite && Math.abs(kopfX(w) - m.x) <= 2);
         if (feind) {
           schadenAnWurm(feind, m.schaden, jetzt);
           r.effekte.push({
@@ -514,7 +529,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
         let ziel: Wurm | null = null;
         let minD = Infinity;
         for (const f of feinde) {
-          const d = Math.abs(f.x - basisX);
+          const d = Math.abs(kopfX(f) - basisX);
           if (d <= reichweite && d < minD) {
             minD = d;
             ziel = f;
@@ -522,7 +537,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
         }
         if (!ziel) return;
         schadenAnWurm(ziel, schaden, jetzt);
-        r.kanonenBlitz.push({ id: fallIdZaehler++, seite, zielX: ziel.x, bis: jetzt + 200 });
+        r.kanonenBlitz.push({ id: fallIdZaehler++, seite, zielX: kopfX(ziel), bis: jetzt + 200 });
       };
       if (r.spielerKanone >= KANONEN_INTERVALL_MS) {
         r.spielerKanone = 0;
@@ -593,7 +608,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
     setBauSegmente((s) => s.filter((_, i) => i !== index));
   };
   const bauKosten = useMemo(
-    () => bauSegmente.reduce((acc, s) => acc + SEGMENTE[s.key].kosten, 0),
+    () => bauSegmente.reduce((acc, s) => acc + segmentKosten(s.key, s.stufe), 0),
     [bauSegmente],
   );
   const starteWurm = () => {
@@ -622,8 +637,8 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
   };
 
   const handleSiegRueckkehr = useCallback(() => {
-    const belohnung = Math.ceil(effLevel / 3) + matchAepfel;
-    // Bonus-Sternanis bei höheren Levels selten
+    // Spec: 5 garantierte Äpfel + alle im Match gesammelten + Level-Bonus.
+    const belohnung = 5 + matchAepfel + Math.floor(effLevel / 5);
     const sternBonus = matchSternanis + (effLevel >= 30 ? (Math.random() < 0.4 ? 1 : 0) : 0);
     onSieg(belohnung, sternBonus);
   }, [onSieg, matchAepfel, matchSternanis, effLevel]);
@@ -816,7 +831,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
                 <SegmentSymbolMitIcon keyName={key} />
                 <span className="mt-1 font-bold">{def.name}</span>
                 <span className="text-[10px] text-emerald-700">Stufe {stufe}</span>
-                <span className="text-[10px] text-emerald-900">{def.kosten} Bl.</span>
+                <span className="text-[10px] text-emerald-900">{segmentKosten(key, stufe)} Bl.</span>
               </button>
             );
           })}
@@ -836,7 +851,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
         <EndBildschirm
           titel="Sieg im Krieg der Wuermer!"
           farbe="from-yellow-200 to-yellow-500"
-          beschreibung={`Belohnung: +${5 + matchAepfel} Rote Äpfel.`}
+          beschreibung={`Belohnung: +${5 + matchAepfel + Math.floor(effLevel / 5)} Rote Äpfel.`}
           aktion={handleSiegRueckkehr}
           aktionLabel="Zurück zum Hauptmenü"
         />
