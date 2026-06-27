@@ -408,35 +408,35 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
         // (Baum am Kartenende blockiert die Bewegung).
         const speed = wurmGeschwindigkeit(w);
         const kannBewegen = jetzt >= w.feuerStop && jetzt >= w.knockbackBis;
-        // Head-Collision: nächster feindlicher Wurm direkt vor uns?
+        // Kopf-an-Kopf-Blockade: kein Überlappen mit Gegnerwürmern.
         let blockiert = false;
         for (const g of gegner) {
-          const vorne = w.seite === "spieler" ? g.x - w.x : w.x - g.x;
-          if (vorne > 0 && vorne <= 4) { blockiert = true; break; }
+          const gKopf = kopfX(g);
+          const vorne = w.seite === "spieler" ? gKopf - meinKopf : meinKopf - gKopf;
+          if (vorne > -0.5 && vorne <= 1.5) { blockiert = true; break; }
         }
         if (kannBewegen) {
-          // Stoppen, wenn an gegnerischer Basis ODER feindlicher Wurm vor dem Kopf
-          if (basisDist > 3 && !blockiert) {
+          if (basisDist > 1.5 && !blockiert) {
             const dx = (speed * TICK_MS) / 1000;
             w.x += w.seite === "spieler" ? dx : -dx;
-            // Baum am Kartenende blockiert
             if (w.seite === "spieler") w.x = Math.min(GEGNER_BASIS_X, w.x);
             else w.x = Math.max(SPIELER_BASIS_X, w.x);
           }
         }
 
-        // Nahkampf: an ALLE Gegner in Bissreichweite, egal welcher Pfad
+        // Nahkampf: nur Gegner unmittelbar vor dem Kopf.
         const dmgProSek = nahkampfSchaden(w);
         const tickDmg = (dmgProSek * TICK_MS) / 1000;
         let hatGebissen = false;
         for (const g of gegner) {
-          if (Math.abs(g.x - w.x) <= 3) {
+          const gKopf = kopfX(g);
+          const vor = w.seite === "spieler" ? gKopf - meinKopf : meinKopf - gKopf;
+          if (vor > -1 && vor <= 2) {
             schadenAnWurm(g, tickDmg, jetzt);
             hatGebissen = true;
           }
         }
-        // Basis-Biss zusätzlich, wenn Wurm an Basis dran ist
-        if (basisDist <= 3 && jetzt >= w.knockbackBis) {
+        if (basisDist <= 2 && jetzt >= w.knockbackBis) {
           const dmg = (nahkampfSchaden(w) * TICK_MS) / 1000;
           if (w.seite === "spieler") setGegnerBasisHp((h) => Math.max(0, h - dmg));
           else setSpielerBasisHp((h) => Math.max(0, h - dmg));
