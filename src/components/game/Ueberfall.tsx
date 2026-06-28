@@ -1,4 +1,3 @@
-
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Apple, Trees, Heart, Skull, Bird, Play, Zap, ArrowUpCircle, Pause, PlayCircle } from "lucide-react";
 import { SternanisIcon } from "./Sternanis";
@@ -346,12 +345,10 @@ function UeberfallMatch({ fortschritt, onAenderung, onFertig }: { fortschritt: G
           setTimeout(() => setBaumWackel(false), 150);
         }
 
-        const linksLebend = lebend.filter(s => s.seite === "links");
-        const rechtsLebend = lebend.filter(s => s.seite === "rechts");
-
-        // Dynamischer Fokus: Sucht sich jeden Tick ein wechselndes Primärziel pro Seite aus
-        const zielLinks = linksLebend.length > 0 ? linksLebend[Math.floor(Math.random() * linksLebend.length)].id : null;
-        const zielRechts = rechtsLebend.length > 0 ? rechtsLebend[Math.floor(Math.random() * rechtsLebend.length)].id : null;
+        // ZIELSUCHE FÜR DIE 2 ZUSÄTZLICHEN WAFFEN:
+        // Wir mischen oder wählen stabil die ersten beiden lebenden Ziele global aus
+        const zielEinsId = lebend.length > 0 ? lebend[0].id : null;
+        const zielZweiId = lebend.length > 1 ? lebend[1].id : null;
 
         setMussMitzaehlenAngriff(p => (p + 1) % 40);
 
@@ -366,20 +363,19 @@ function UeberfallMatch({ fortschritt, onAenderung, onFertig }: { fortschritt: G
           // 1. Permanenter, verteilter Grundschaden (Flächenschaden an allen)
           neueHp -= (2.0 + level * 0.15);
 
-          // 2. Erhöhter Einzelschaden auf das wechselnde Primärziel (Fokus verliert deutlich schneller)
-          if (s.id === zielLinks || s.id === zielRechts) {
-            neueHp -= (14 + level * 1.5); 
-            if (Math.random() < 0.3) amWackeln = 4;
+          // 2. Die zwei zusätzlichen fokussierten Waffen (150% des regulären gezielten Schadens)
+          // Regulärer Schaden betrug (14 + level * 1.5). 150% davon = * 1.5
+          if (s.id === zielEinsId || s.id === zielZweiId) {
+            neueHp -= (14 + level * 1.5) * 1.5; 
+            if (Math.random() < 0.4) amWackeln = 4;
           }
 
-          // 3. Großer Baum-Hieb (Kombination aus globalem AoE-Flächenschaden und Fokus-Todesstoß)
+          // 3. Großer Baum-Hieb (Periodischer globaler AoE + extra Einschlag für Primärziele)
           if (mussMitzaehlenAngriff === 0) {
-            // Alle lebenden Schmetterlinge erleiden Flächenschaden
             neueHp -= (35 + level * 1.2);
             amWackeln = 5;
 
-            // Die beiden Primärziele fangen zusätzlich den massiven Hauptschlag ab
-            if (s.id === zielLinks || s.id === zielRechts) {
+            if (s.id === zielEinsId || s.id === zielZweiId) {
               neueHp -= (120 + level * 10);
               amWackeln = 8;
             }
