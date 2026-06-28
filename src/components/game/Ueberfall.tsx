@@ -1,3 +1,4 @@
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Apple, Trees, Heart, Skull, Bird, Play, Zap, ArrowUpCircle, Pause, PlayCircle } from "lucide-react";
 import { SternanisIcon } from "./Sternanis";
@@ -250,15 +251,27 @@ function UeberfallMatch({ fortschritt, onAenderung, onFertig }: { fortschritt: G
 
   const beendeMatch = useCallback((sieg: boolean, istVorzeitigerRueckzug = false) => {
     const final = beuteRef.current;
-    const faktor = sieg ? 1 : 0.05;
-    const aepfel = Math.floor((final.rot + final.gruen * 5) * faktor);
-    const sternanis = Math.floor(final.stern * faktor);
-    
+    let faktor = 1;
+
+    const lebendeSchm = schm.filter(s => !s.fallend);
     let bereitNeu = u.schmetterlingeBereit;
 
-    if (istVorzeitigerRueckzug) {
+    if (sieg) {
+      faktor = 1;
+      const ueberlebt = schm.filter((s) => s.hp > 0 && !s.fallend).length;
+      const verbraucht = initial - ueberlebt;
+      bereitNeu = Math.max(0, u.schmetterlingeBereit - verbraucht);
+    } else if (istVorzeitigerRueckzug) {
+      // DYNAMISCHE BEUTE BEIM AUFGEBEN (5% bis 50%)
+      const basisZufall = 0.05 + Math.random() * 0.15; // 5% bis 20% als absolute Untergrenze
+      const levelBonus = level * 0.005; // +0.5% pro Forschungslevel
+      const schmetterlingBonus = lebendeSchm.length * 0.02; // +2.0% pro lebendem Schmetterling
+      
+      // Maximal 50% Beuteerhalt deckeln
+      faktor = Math.min(0.50, basisZufall + levelBonus + schmetterlingBonus);
+
+      // Schmetterlingsverlust-Kalkulation beim Rückzug
       const baumHpFaktor = baumHp / baumMax; 
-      const lebendeSchm = schm.filter(s => !s.fallend);
       const schmHpFaktor = lebendeSchm.length > 0 
         ? (lebendeSchm.reduce((acc, curr) => acc + curr.hp, 0) / lebendeSchm.length) / 3000
         : 0;
@@ -269,10 +282,13 @@ function UeberfallMatch({ fortschritt, onAenderung, onFertig }: { fortschritt: G
       const getöteteSchmetterlinge = Math.ceil(initial * finalerVerlustFaktor);
       bereitNeu = Math.max(0, u.schmetterlingeBereit - getöteteSchmetterlinge);
     } else {
-      const ueberlebt = schm.filter((s) => s.hp > 0 && !s.fallend).length;
-      const verbraucht = initial - ueberlebt;
-      bereitNeu = Math.max(0, u.schmetterlingeBereit - verbraucht);
+      // Normale Niederlage (Schmetterlinge alle tot) -> Fester Mindestwert
+      faktor = 0.05;
+      bereitNeu = Math.max(0, u.schmetterlingeBereit - initial);
     }
+    
+    const aepfel = Math.floor((final.rot + final.gruen * 5) * faktor);
+    const sternanis = Math.floor(final.stern * faktor);
     
     onAenderung({
       ...fortschritt,
@@ -287,7 +303,7 @@ function UeberfallMatch({ fortschritt, onAenderung, onFertig }: { fortschritt: G
       },
     });
     onFertig();
-  }, [schm, initial, u, fortschritt, onAenderung, onFertig, baumHp, baumMax]);
+  }, [schm, initial, u, fortschritt, onAenderung, onFertig, baumHp, baumMax, level]);
 
   useEffect(() => {
     if (status !== "laeuft" || istPausiert) return;
