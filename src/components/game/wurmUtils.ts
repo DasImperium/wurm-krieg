@@ -2,10 +2,11 @@ import { SEGMENTE, type SegmentKey, type GespeicherterFortschritt } from "@/lib/
 import type { Wurm, Segment } from "./types";
 import { ANZAHL_PFADE } from "./constants";
 
-let wurmIdZaehler = 1;
-let fallIdZaehler = 1;
-let mineIdZaehler = 1;
-let effektIdZaehler = 1;
+// Global counters - exported for use in Spielfeld.tsx
+export let wurmIdZaehler = 1;
+export let fallIdZaehler = 1;
+export let mineIdZaehler = 1;
+export let effektIdZaehler = 1;
 
 export function resetIdZaehler(): void {
   wurmIdZaehler = 1;
