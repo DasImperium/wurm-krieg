@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Apple, Trees, Heart, Skull, Bird, Play, Zap } from "lucide-react";
+import { ArrowLeft, Apple, Trees, Heart, Skull, Bird, Play, Zap, ArrowUpCircle } from "lucide-react";
 import { SternanisIcon } from "./Sternanis";
 import type { GespeicherterFortschritt } from "@/lib/game/segments";
 
@@ -11,36 +11,32 @@ interface Props {
 
 type ItemArt = "rot" | "gruen" | "stern" | "heal" | "gift";
 interface FallItem { id: number; art: ItemArt; x: number; y: number; vy: number; }
-interface Schmetterling { 
-  id: number; 
-  seite: "links" | "rechts";
-  x: number; 
-  y: number;
-  hp: number;
-  maxHp: number;
-  fallend: boolean; 
-  vy: number;
-  fallStartTime?: number;
-}
-interface SchussAnimation { id: number; source: "baum" | "spieler"; seite: "links" | "rechts"; startTime: number; duration: number; }
+interface Schmetterling { id: number; x: number; y: number; hp: number; fallend: boolean; vy: number; maxHp: number; }
+interface Schuss { id: number; x: number; y: number; vy: number; seite: "spieler" | "baum"; istFlaechenschaden?: boolean; }
 
 const SCHLUEPF_MS = 5 * 60 * 1000;
 const TICK = 50;
 
 function dropTable(level: number) {
-  // skaliert mit level; Summe = 100
-  const stern = Math.min(6, 1 + Math.floor(level / 4));
-  const gruen = Math.min(25, 5 + level);
-  const heal = Math.min(15, 5 + Math.floor(level / 3));
-  let gift = Math.max(2, 20 - Math.floor(level / 2));
-  let nichts = Math.max(2, 34 - Math.floor(level * 1.2));
-  // Ab Level 20 sind nichts/gift die niedrigsten
-  if (level >= 20) {
-    gift = Math.min(gift, 5);
-    nichts = Math.min(nichts, 5);
+  // Erhöhte "nichts"-Wahrscheinlichkeit in den ersten 15 Leveln, um Early-Game-Exploits zu verhindern
+  let nichts = 0;
+  if (level <= 15) {
+    nichts = Math.max(20, 50 - level * 2);
+  } else {
+    nichts = Math.max(5, 20 - Math.floor((level - 15) * 1.5));
   }
+
+  // Skalierung der Belohnungen basierend auf dem Level
+  const stern = Math.min(8, 1 + Math.floor(level / 3));
+  const gruen = Math.min(25, 5 + Math.floor(level * 0.8));
+  const heal = Math.min(15, 6 + Math.floor(level / 4));
+  
+  // Gift sinkt leicht mit höherem Level, bleibt aber präsent
+  const gift = Math.max(3, 15 - Math.floor(level / 2));
+
   const rest = 100 - (stern + gruen + heal + gift + nichts);
   const rot = Math.max(10, rest);
+
   return { rot, gruen, stern, heal, gift, nichts };
 }
 
@@ -56,17 +52,27 @@ function wuerfleItem(level: number): ItemArt | null {
   return null;
 }
 
+function berechneForschungsKosten(aktuellesLevel: number): { aepfel: number; sternanis: number } {
+  const zielLevel = aktuellesLevel + 1;
+  if (zielLevel <= 10) {
+    return { aepfel: zielLevel * 15, sternanis: 0 };
+  } else {
+    return { aepfel: 150 + (zielLevel - 10) * 25, sternanis: zielLevel - 10 };
+  }
+}
+
 export function Ueberfall({ fortschritt, onAenderung, onZurueck }: Props) {
-  // Schlüpf-Mechanik: bei Mount fehlende Schmetterlinge nachfüllen, je 5 Min
+  // Fallback-Initalisierung falls Felder fehlen
   useEffect(() => {
     const u = fortschritt.ueberfall;
-    if (u.schmetterlingeBereit >= u.maxSchmetterlinge) return;
-    const jetzt = Date.now();
-    const seitDem = jetzt - (u.letzteSchluepfung || jetzt);
-    const neue = Math.floor(seitDem / SCHLUEPF_MS);
-    if (neue > 0) {
-      const bereit = Math.min(u.maxSchmetterlinge, u.schmetterlingeBereit + neue);
-      onAenderung({ ...fortschritt, ueberfall: { ...u, schmetterlingeBereit: bereit, letzteSchluepfung: jetzt } });
+    if (u.maxSchmetterlinge === undefined || u.maxSchmetterlinge > 12) {
+      onAenderung({
+        ...fortschritt,
+        ueberfall: {
+          ...u,
+          maxSchmetterlinge: Math.min(12, u.maxSchmetterlinge || 4),
+        }
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -89,8 +95,12 @@ export function Ueberfall({ fortschritt, onAenderung, onZurueck }: Props) {
   }
 
   const u = fortschritt.ueberfall;
+  const maxSchm = Math.min(12, u.maxSchmetterlinge || 4);
   const upgradeKosten = berechneUpgradeKosten(u.upgradeStufe);
-  const kannUpgraden = fortschritt.aepfel >= upgradeKosten.aepfel && fortschritt.sternanis >= upgradeKosten.sternanis;
+  const forschungsKosten = berechneForschungsKosten(u.level);
+  
+  const kannUpgraden = fortschritt.aepfel >= upgradeKosten.aepfel && fortschritt.sternanis >= upgradeKosten.sternanis && maxSchm < 12;
+  const kannForschen = fortschritt.aepfel >= forschungsKosten.aepfel && fortschritt.sternanis >= forschungsKosten.sternanis;
 
   const upgrade = () => {
     if (!kannUpgraden) return;
@@ -98,26 +108,36 @@ export function Ueberfall({ fortschritt, onAenderung, onZurueck }: Props) {
       ...fortschritt,
       aepfel: fortschritt.aepfel - upgradeKosten.aepfel,
       sternanis: fortschritt.sternanis - upgradeKosten.sternanis,
-      ueberfall: { ...u, upgradeStufe: u.upgradeStufe + 1, maxSchmetterlinge: u.maxSchmetterlinge + 2 },
+      ueberfall: { ...u, upgradeStufe: u.upgradeStufe + 1, maxSchmetterlinge: Math.min(12, maxSchm + 2) },
+    });
+  };
+
+  const forschen = () => {
+    if (!kannForschen) return;
+    onAenderung({
+      ...fortschritt,
+      aepfel: fortschritt.aepfel - forschungsKosten.aepfel,
+      sternanis: fortschritt.sternanis - forschungsKosten.sternanis,
+      ueberfall: { ...u, level: u.level + 1 },
     });
   };
 
   const sofortNachzucht = () => {
-    if (u.schmetterlingeBereit >= u.maxSchmetterlinge) return;
-    const fehlend = u.maxSchmetterlinge - u.schmetterlingeBereit;
+    if (u.schmetterlingeBereit >= maxSchm) return;
+    const fehlend = maxSchm - u.schmetterlingeBereit;
     if (u.level < 16) {
       const kosten = fehlend * 3;
       if (fortschritt.aepfel < kosten) return;
       onAenderung({
         ...fortschritt, aepfel: fortschritt.aepfel - kosten,
-        ueberfall: { ...u, schmetterlingeBereit: u.maxSchmetterlinge, letzteSchluepfung: Date.now() },
+        ueberfall: { ...u, schmetterlingeBereit: maxSchm, letzteSchluepfung: Date.now() },
       });
     } else {
       const kosten = fehlend;
       if (fortschritt.sternanis < kosten) return;
       onAenderung({
         ...fortschritt, sternanis: fortschritt.sternanis - kosten,
-        ueberfall: { ...u, schmetterlingeBereit: u.maxSchmetterlinge, letzteSchluepfung: Date.now() },
+        ueberfall: { ...u, schmetterlingeBereit: maxSchm, letzteSchluepfung: Date.now() },
       });
     }
   };
@@ -140,27 +160,34 @@ export function Ueberfall({ fortschritt, onAenderung, onZurueck }: Props) {
 
         <div className="mt-6 rounded-xl bg-purple-950/60 p-4 ring-1 ring-pink-300/20">
           <p className="text-sm">Bereite Schmetterlinge:</p>
-          <p className="mt-1 text-4xl font-extrabold text-pink-200">{u.schmetterlingeBereit} / {u.maxSchmetterlinge}</p>
+          <p className="mt-1 text-4xl font-extrabold text-pink-200">{u.schmetterlingeBereit} / {maxSchm}</p>
           <p className="mt-1 text-xs text-purple-200">Nachschub: 1 Schmetterling alle 5 Minuten. Überlebende heilen voll, Gefallene müssen nachzüchten.</p>
-          <p className="mt-2 text-xs">Aktuelle Stufe: <strong>{u.level}</strong> · Upgrades: <strong>{u.upgradeStufe}</strong></p>
+          <p className="mt-2 text-xs">Aktuelle Forschungs-Stufe: <strong>{u.level}</strong> · Kapazitäts-Upgrades: <strong>{u.upgradeStufe}</strong></p>
         </div>
 
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
           <button type="button" onClick={sofortNachzucht}
-            disabled={u.schmetterlingeBereit >= u.maxSchmetterlinge}
-            className="rounded-xl bg-amber-500 px-4 py-3 text-sm font-bold text-purple-950 hover:bg-amber-400 disabled:bg-purple-700 disabled:text-purple-300">
+            disabled={u.schmetterlingeBereit >= maxSchm}
+            className="rounded-xl bg-amber-500 p-3 text-xs font-bold text-purple-950 hover:bg-amber-400 disabled:bg-purple-700 disabled:text-purple-300">
             <Zap className="mr-1 inline h-4 w-4" /> Sofort-Nachzucht
-            <div className="text-[10px] font-normal opacity-80">
-              {u.level < 16
-                ? `${(u.maxSchmetterlinge - u.schmetterlingeBereit) * 3} 🍎`
-                : `${u.maxSchmetterlinge - u.schmetterlingeBereit} ★`}
+            <div className="text-[10px] font-normal opacity-80 mt-1">
+              {u.level < 16 ? `${(maxSchm - u.schmetterlingeBereit) * 3} 🍎` : `${maxSchm - u.schmetterlingeBereit} ★`}
             </div>
           </button>
+
           <button type="button" onClick={upgrade} disabled={!kannUpgraden}
-            className="rounded-xl bg-fuchsia-600 px-4 py-3 text-sm font-bold hover:bg-fuchsia-500 disabled:bg-purple-700 disabled:text-purple-300">
-            Max-Schmetterlinge erhöhen
-            <div className="text-[10px] font-normal opacity-80">
-              {upgradeKosten.aepfel} 🍎{upgradeKosten.sternanis ? ` + ${upgradeKosten.sternanis} ★` : ""}
+            className="rounded-xl bg-fuchsia-600 p-3 text-xs font-bold hover:bg-fuchsia-500 disabled:bg-purple-700 disabled:text-purple-300">
+            {maxSchm >= 12 ? "Max. Kapazität erreicht" : "Kapazität erhöhen"}
+            <div className="text-[10px] font-normal opacity-80 mt-1">
+              {maxSchm >= 12 ? "Max (12)" : `${upgradeKosten.aepfel} 🍎${upgradeKosten.sternanis ? ` + ${upgradeKosten.sternanis} ★` : ""}`}
+            </div>
+          </button>
+
+          <button type="button" onClick={forschen} disabled={!kannForschen}
+            className="rounded-xl bg-cyan-600 p-3 text-xs font-bold hover:bg-cyan-500 disabled:bg-purple-700 disabled:text-purple-300">
+            <ArrowUpCircle className="mr-1 inline h-4 w-4" /> Verbessern (Forschung)
+            <div className="text-[10px] font-normal opacity-80 mt-1">
+              Stufe {u.level} → {u.level + 1}: {forschungsKosten.aepfel} 🍎{forschungsKosten.sternanis ? ` + ${forschungsKosten.sternanis} ★` : ""}
             </div>
           </button>
         </div>
@@ -186,37 +213,29 @@ function UeberfallMatch({
 }: { fortschritt: GespeicherterFortschritt; onAenderung: (f: GespeicherterFortschritt) => void; onFertig: () => void }) {
   const u = fortschritt.ueberfall;
   const level = u.level;
-  const initial = Math.min(u.schmetterlingeBereit, 4 + Math.min(8, Math.floor(level / 2)));
-  const baumMax = 1000 + level * 250;
+  const maxSchm = Math.min(12, u.maxSchmetterlinge || 4);
+  const initial = Math.min(u.schmetterlingeBereit, maxSchm);
+  
+  const baumMax = 800 + level * 200;
   const baumKanonen = Math.min(4, 2 + Math.floor(level / 6));
 
   const [baumHp, setBaumHp] = useState(baumMax);
-  const [schm, setSchm] = useState<Schmetterling[]>(() => {
-    const halbiert = Math.ceil(initial / 2);
-    const schmLinksGruppe = Array.from({ length: halbiert }, (_, i) => ({
+  
+  // Schmetterlinge erhalten stark erhöhtes Leben für langanhaltende Kämpfe (~2 Minuten)
+  const [schm, setSchm] = useState<Schmetterling[]>(() =>
+    Array.from({ length: initial }, (_, i) => ({
       id: i + 1,
-      seite: "links" as const,
-      x: 10 + Math.random() * 15,
-      y: 30 + (i * 15) / Math.max(1, halbiert - 1),
-      hp: 100,
-      maxHp: 100,
+      x: 10 + (i * 80) / Math.max(1, initial - 1),
+      y: 70 + Math.random() * 12,
+      hp: 1500, // Deutlich erhöhtes HP-Polster
+      maxHp: 1500,
       fallend: false,
       vy: 0,
-    }));
-    const schmRechtsGruppe = Array.from({ length: initial - halbiert }, (_, i) => ({
-      id: halbiert + i + 1,
-      seite: "rechts" as const,
-      x: 75 + Math.random() * 15,
-      y: 30 + (i * 15) / Math.max(1, initial - halbiert - 1),
-      hp: 100,
-      maxHp: 100,
-      fallend: false,
-      vy: 0,
-    }));
-    return [...schmLinksGruppe, ...schmRechtsGruppe];
-  });
+    })),
+  );
+  
   const [items, setItems] = useState<FallItem[]>([]);
-  const [schussAnimationen, setSchussAnimationen] = useState<SchussAnimation[]>([]);
+  const [schuesse, setSchuesse] = useState<Schuss[]>([]);
   const [beute, setBeute] = useState({ rot: 0, gruen: 0, stern: 0 });
   const [status, setStatus] = useState<"laeuft" | "sieg-warte" | "sieg" | "niederlage">("laeuft");
   const itemIdRef = useRef(1);
@@ -226,16 +245,11 @@ function UeberfallMatch({
 
   const beendeMatch = useCallback((sieg: boolean) => {
     const final = beuteRef.current;
-    
-    // Gewinn-Regelung:
-    // - Niederlage: 100% der Beute behalten (alles eingesammelte)
-    // - Sieg: 110% der Beute (Bonusmultiplikator)
-    const faktor = sieg ? 1.1 : 1.0;
-    const aepfelRoh = final.rot + (final.gruen * 5);
-    const aepfel = Math.floor(aepfelRoh * faktor);
+    const faktor = sieg ? 1 : 0.05;
+    const aepfel = Math.floor((final.rot + final.gruen * 5) * faktor);
     const sternanis = Math.floor(final.stern * faktor);
     
-    // Schmetterlinge: Überlebende heilen voll, Gefallene verbraucht
+    // Dynamische Ermittlung der Überlebenden
     const ueberlebt = schm.filter((s) => s.hp > 0 && !s.fallend).length;
     const verbraucht = initial - ueberlebt;
     const bereitNeu = Math.max(0, u.schmetterlingeBereit - verbraucht);
@@ -248,7 +262,6 @@ function UeberfallMatch({
         ...u,
         schmetterlingeBereit: bereitNeu,
         letzteSchluepfung: Date.now(),
-        level: sieg ? u.level + 1 : u.level,
         siege: u.siege + (sieg ? 1 : 0),
         niederlagen: u.niederlagen + (sieg ? 0 : 1),
       },
@@ -256,7 +269,7 @@ function UeberfallMatch({
     onFertig();
   }, [schm, initial, u, fortschritt, onAenderung, onFertig]);
 
-  // game loop
+  // Game Loop
   useEffect(() => {
     if (status !== "laeuft") return;
     const handle = window.setInterval(() => {
@@ -264,39 +277,29 @@ function UeberfallMatch({
       if (Math.random() < 0.15) {
         const art = wuerfleItem(level);
         if (art) {
-          setItems((prev) => [...prev, { id: itemIdRef.current++, art, x: 35 + Math.random() * 30, y: 0, vy: 0.5 + Math.random() * 0.3 }]);
+          setItems((prev) => [...prev, { id: itemIdRef.current++, art, x: 15 + Math.random() * 70, y: 25, vy: 0.6 + Math.random() * 0.4 }]);
         }
       }
       // Items bewegen
-      setItems((prev) => prev.map((it) => ({ ...it, y: it.y + it.vy })).filter((it) => it.y < 100));
+      setItems((prev) => prev.map((it) => ({ ...it, y: it.y + it.vy })).filter((it) => it.y < 105));
 
-      // Baum-Kanonen schießen
-      if (Math.random() < 0.12 * baumKanonen) {
-        const kanonSeite = Math.random() < 0.5 ? "links" : "rechts";
-        const targets = schm.filter(s => !s.fallend && s.seite === kanonSeite);
-        
-        if (targets.length > 0) {
-          const target = targets[Math.floor(Math.random() * targets.length)];
-          
-          // Schuss-Animation
-          setSchussAnimationen((prev) => [...prev, {
-            id: schussIdRef.current++,
-            source: "baum",
-            seite: kanonSeite,
-            startTime: Date.now(),
-            duration: 150,
-          }]);
-          
-          // Schaden anwenden
-          setSchm((prev) => prev.map((s) => 
-            s.id === target.id 
-              ? { ...s, hp: Math.max(0, s.hp - 40) }
-              : s
-          ));
-        }
+      // Baum-Kanonen schießen (Moderatere Schussrate für bessere Balance)
+      if (Math.random() < 0.05 * baumKanonen) {
+        const istAoe = Math.random() < 0.25; // 25% Chance auf verheerenden Flächenschaden
+        setSchuesse((prev) => [...prev, {
+          id: schussIdRef.current++, 
+          x: 15 + Math.random() * 70, 
+          y: 12, 
+          vy: 1.2 + Math.random() * 0.4, 
+          seite: "baum",
+          istFlaechenschaden: istAoe
+        }]);
       }
 
-      // Schmetterlinge schießen und fallen prüfen
+      // Schüsse bewegen + Trefferprüfung
+      setSchuesse((prev) => prev.map((s) => ({ ...s, y: s.y + s.vy })).filter((s) => s.y > -5 && s.y < 105));
+
+      // Schmetterlinge updaten
       setSchm((prev) => {
         const lebend = prev.filter((s) => !s.fallend);
         if (lebend.length === 0) {
@@ -304,43 +307,57 @@ function UeberfallMatch({
           return prev;
         }
         
-        // Schmetterlinge schießen auf Baum
-        if (Math.random() < 0.2) {
+        // Schmetterlinge schießen kontrolliert zurück
+        if (Math.random() < 0.25) {
           const s = lebend[Math.floor(Math.random() * lebend.length)];
-          
-          // Schuss-Animation
-          setSchussAnimationen((sc) => [...sc, {
-            id: schussIdRef.current++,
-            source: "spieler",
-            seite: s.seite,
-            startTime: Date.now(),
-            duration: 150,
-          }]);
-          
-          setBaumHp((h) => Math.max(0, h - 15));
+          setSchuesse((sc) => [...sc, { id: schussIdRef.current++, x: s.x, y: s.y, vy: -2.0, seite: "spieler" }]);
+          setBaumHp((h) => Math.max(0, h - 6));
         }
-        
-        // Schmetterlinge updaten (fallend oder normal)
+
         return prev.map((s) => {
           if (s.fallend) {
-            return { 
-              ...s, 
-              y: s.y + s.vy, 
-              vy: s.vy + 0.08,
-              fallStartTime: s.fallStartTime || Date.now(),
-            };
+            return { ...s, y: s.y + s.vy, vy: s.vy + 0.05 };
           }
-          // Tot -> fallend
-          if (s.hp <= 0) {
-            return { ...s, hp: 0, fallend: true, vy: 0.3, fallStartTime: Date.now() };
-          }
-          // Sanftes Wackeln
-          return { ...s, x: s.x + (Math.random() - 0.5) * 0.3, y: s.y + (Math.random() - 0.5) * 0.2 };
-        }).filter((s) => s.y < 100);
-      });
 
-      // Schuss-Animationen cleanup
-      setSchussAnimationen((prev) => prev.filter((anim) => Date.now() - anim.startTime < anim.duration));
+          let neueHp = s.hp;
+
+          // Kollisionsabfrage mit Baum-Schüssen
+          setSchuesse((sc) => {
+            // Findet Schüsse in der Nähe des Schmetterlings
+            const treffer = sc.find((sh) => sh.seite === "baum" && Math.abs(sh.x - s.x) < 5 && Math.abs(sh.y - s.y) < 5);
+            
+            if (treffer) {
+              if (treffer.istFlaechenschaden) {
+                neueHp -= 75; // Moderater AoE-Schaden an betroffenen Würmern
+              } else {
+                neueHp -= 40; // Gezielter, gut überlebbarer Einzelschaden
+              }
+              // Wir entfernen den Schuss nur, wenn es kein AoE ist, damit AoE mehrere treffen kann
+              if (!treffer.istFlaechenschaden) {
+                return sc.filter((sh) => sh.id !== treffer.id);
+              }
+            }
+            return sc;
+          });
+
+          // Unvorhersehbares, individuelles Zusatzwackeln & minimaler Einzelschaden,
+          // damit sie nicht als starre Kette synchron sterben
+          if (Math.random() < 0.05) {
+            neueHp -= Math.random() * 15;
+          }
+
+          if (neueHp <= 0) {
+            return { ...s, hp: 0, fallend: true, vy: 0.3 };
+          }
+
+          return { 
+            ...s, 
+            hp: neueHp, 
+            x: Math.max(5, Math.min(95, s.x + (Math.random() - 0.5) * 0.5)), 
+            y: Math.max(60, Math.min(85, s.y + (Math.random() - 0.5) * 0.5)) 
+          };
+        }).filter((s) => s.y < 105);
+      });
     }, TICK);
     return () => window.clearInterval(handle);
   }, [status, level, baumKanonen]);
@@ -358,29 +375,29 @@ function UeberfallMatch({
   useEffect(() => {
     if (status === "sieg") beendeMatch(true);
     if (status === "niederlage") {
-      window.setTimeout(() => beendeMatch(false), 1500);
+      window.setTimeout(() => beendeMatch(false), 1200);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status]);
+  }, [status, beendeMatch]);
 
+  // Item-Klicks (Heilungs- und Giftäpfel treffen jetzt ALLE)
   const klickItem = (id: number) => {
     const it = items.find((i) => i.id === id);
     if (!it) return;
     setItems((prev) => prev.filter((i) => i.id !== id));
+    
     if (it.art === "rot") setBeute((b) => ({ ...b, rot: b.rot + 1 }));
     else if (it.art === "gruen") setBeute((b) => ({ ...b, gruen: b.gruen + 1 }));
     else if (it.art === "stern") setBeute((b) => ({ ...b, stern: b.stern + 1 }));
     else if (it.art === "heal") {
-      setSchm((prev) => prev.map((s) => s.fallend ? s : ({ ...s, hp: Math.min(s.maxHp, s.hp + 5) })));
+      // Heilt alle lebenden Einheiten um 15% ihres Maximal-Lebens
+      setSchm((prev) => prev.map((s) => s.fallend ? s : ({ ...s, hp: Math.min(s.maxHp, s.hp + 225) })));
     } else if (it.art === "gift") {
-      setSchm((prev) => prev.map((s) => s.fallend ? s : ({ ...s, hp: Math.max(0, s.hp - 8) })));
+      // Zieht allen lebenden Einheiten direkt Schaden ab
+      setSchm((prev) => prev.map((s) => s.fallend ? s : ({ ...s, hp: Math.max(0, s.hp - 120) })));
     }
   };
 
   const baumProz = useMemo(() => (baumHp / baumMax) * 100, [baumHp, baumMax]);
-  const aepfelGesamt = beute.rot + (beute.gruen * 5);
-  const aepfelMitBonus = Math.floor(aepfelGesamt * 1.1);
-  const sternMitBonus = Math.floor(beute.stern * 1.1);
 
   return (
     <div className="relative min-h-screen w-full overflow-hidden bg-gradient-to-b from-sky-300 via-emerald-200 to-emerald-500">
@@ -389,153 +406,73 @@ function UeberfallMatch({
         <button type="button" onClick={() => beendeMatch(false)} className="rounded bg-purple-800 px-2 py-1 text-xs hover:bg-purple-700">
           <ArrowLeft className="inline h-3 w-3" /> Aufgeben
         </button>
-        <div className="rounded bg-pink-700/60 px-2 py-1 text-xs font-bold">Stufe {level}</div>
+        <div className="rounded bg-pink-700/60 px-2 py-1 text-xs font-bold">Forschungsstufe {level}</div>
         <div className="flex flex-1 items-center gap-2">
-          <span className="text-xs">Baum:</span>
+          <span className="text-xs">Baum-Struktur:</span>
           <div className="h-3 flex-1 overflow-hidden rounded bg-emerald-950">
             <div className="h-full bg-rose-500 transition-all" style={{ width: `${baumProz}%` }} />
           </div>
-          <span className="text-xs font-bold">{Math.ceil(baumHp)}/{baumMax}</span>
         </div>
         <div className="flex items-center gap-1 rounded bg-red-950/40 px-2 py-1 text-xs"><Apple className="h-3 w-3 text-red-500" fill="#DC2626" /><span>{beute.rot}+{beute.gruen}×5</span></div>
         <div className="flex items-center gap-1 rounded bg-amber-950/40 px-2 py-1 text-xs"><SternanisIcon className="h-3 w-3 text-amber-300" /><span>{beute.stern}</span></div>
       </div>
 
-      {/* Kampfarena */}
-      <div className="relative h-screen w-full">
-        {/* Baum - zentral */}
-        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-20">
-          {/* Blätter-Dach (reicht zu beiden Seiten) */}
-          <div className="absolute left-1/2 -translate-x-1/2 -top-32">
-            {/* Linke Äste */}
-            <div className="absolute right-1/2 h-32 w-72 rounded-full 
-              bg-gradient-to-r from-emerald-600 to-emerald-500 opacity-90 shadow-lg"
-              style={{ clipPath: "polygon(0% 50%, 100% 20%, 100% 80%)" }} />
-            
-            {/* Rechte Äste */}
-            <div className="absolute left-1/2 h-32 w-72 rounded-full 
-              bg-gradient-to-l from-emerald-600 to-emerald-500 opacity-90 shadow-lg"
-              style={{ clipPath: "polygon(0% 20%, 0% 80%, 100% 50%)" }} />
-            
-            {/* Hauptkrone */}
-            <div className="relative h-40 w-40 rounded-full 
-              bg-gradient-to-b from-emerald-500 to-emerald-700 shadow-2xl ring-4 ring-emerald-900" />
-          </div>
-          
-          {/* Stamm - 20% Breite */}
-          <div className="absolute left-1/2 -translate-x-1/2 top-0 h-56 w-32 
-            bg-gradient-to-b from-amber-700 to-amber-900 rounded-b-xl shadow-lg border-2 border-amber-950" />
-          
-          {/* Kanonen (Links/Rechts) */}
-          {Array.from({ length: baumKanonen }).map((_, i) => {
-            const seite = i % 2 === 0 ? "left" : "right";
-            return (
-              <div key={i} className={`absolute top-32 h-3 w-8 bg-slate-800 rounded-sm shadow
-                ${seite === "left" ? "-left-16" : "-right-16"}`} />
-            );
-          })}
-          
-          {/* HP-Balken */}
-          <div className="absolute left-1/2 -translate-x-1/2 top-64 w-40 h-2.5 bg-gray-900 rounded-full overflow-hidden border border-gray-700">
-            <div 
-              className="h-full bg-gradient-to-r from-red-500 to-red-600 transition-all shadow"
-              style={{ width: `${baumProz}%` }}
-            />
-          </div>
-          <div className="absolute left-1/2 -translate-x-1/2 top-72 text-xs font-bold text-emerald-950">
-            {Math.ceil(baumHp)} / {baumMax} HP
-          </div>
+      {/* Riesen-Baum */}
+      <div className="absolute left-1/2 top-0 -translate-x-1/2 z-0">
+        <div className="relative h-[420px] w-[260px]">
+          <div className="absolute left-1/2 top-0 h-44 w-44 -translate-x-1/2 rounded-full bg-emerald-700 shadow-2xl ring-8 ring-emerald-900/40" />
+          <div className="absolute left-1/4 top-6 h-24 w-24 rounded-full bg-emerald-600 opacity-80" />
+          <div className="absolute right-1/4 top-12 h-20 w-20 rounded-full bg-emerald-500 opacity-70" />
+          <div className="absolute left-1/2 top-40 h-64 w-16 -translate-x-1/2 rounded bg-gradient-to-b from-amber-800 to-amber-950" />
+          {/* Kanonen */}
+          {Array.from({ length: baumKanonen }).map((_, i) => (
+            <div key={i} className="absolute h-3 w-8 -translate-x-1/2 rounded bg-slate-900 shadow"
+              style={{ left: `${20 + (i * 60) / Math.max(1, baumKanonen - 1)}%`, top: `${60 + (i % 2) * 20}px` }} />
+          ))}
         </div>
-
-        {/* Schmetterlinge mit Lebensbalken */}
-        {schm.map((s) => {
-          const opacity = s.fallend && s.fallStartTime 
-            ? Math.max(0, 1 - (Date.now() - s.fallStartTime) / 1500)
-            : 1;
-          
-          return (
-            <div 
-              key={s.id} 
-              className="absolute z-10 transition-all" 
-              style={{ 
-                left: `${s.x}%`, 
-                top: `${s.y}%`, 
-                transform: "translate(-50%, -50%)",
-                opacity,
-              }}
-            >
-              {/* Lebensbalken */}
-              <div className="absolute -top-6 left-1/2 -translate-x-1/2 w-12 h-1.5 bg-gray-900 rounded overflow-hidden border border-gray-700">
-                <div 
-                  className="h-full bg-gradient-to-r from-emerald-400 to-emerald-500 transition-all"
-                  style={{ width: `${(s.hp / s.maxHp) * 100}%` }}
-                />
-              </div>
-              
-              {/* HP-Text */}
-              <div className="absolute -top-8 left-1/2 -translate-x-1/2 text-[7px] font-bold text-white">
-                {s.hp}/{s.maxHp}
-              </div>
-              
-              {/* Schmetterling */}
-              <div className={`relative ${s.fallend ? "opacity-70" : ""}`}>
-                <div className="absolute -left-3 top-0 h-6 w-4 rounded-full bg-pink-400 opacity-90" 
-                  style={{ transform: s.fallend ? "scaleX(0.2)" : "rotate(-15deg)" }} />
-                <div className="absolute -right-3 top-0 h-6 w-4 rounded-full bg-pink-400 opacity-90" 
-                  style={{ transform: s.fallend ? "scaleX(0.2)" : "rotate(15deg)" }} />
-                <div className="relative z-10 h-3 w-3 rounded-full bg-purple-900 shadow" />
-                {!s.fallend && <span className="absolute left-1/2 top-1 -translate-x-1/2 text-[8px] font-extrabold text-yellow-300">😈</span>}
-              </div>
-            </div>
-          );
-        })}
-
-        {/* Schuss-Animationen (kurz sichtbar) */}
-        {schussAnimationen.map((anim) => (
-          <div 
-            key={anim.id} 
-            className={`absolute z-15 h-2 w-2 rounded-full animate-pulse
-              ${anim.source === "baum" ? "bg-rose-500 shadow-[0_0_6px_#f43f5e]" : "bg-cyan-400 shadow-[0_0_6px_#06b6d4]"}`}
-            style={{ 
-              left: anim.seite === "links" ? "25%" : "75%",
-              top: "50%",
-              transform: "translate(-50%, -50%)",
-            }} 
-          />
-        ))}
-
-        {/* Fall-Items */}
-        {items.map((it) => (
-          <button key={it.id} type="button" onClick={() => klickItem(it.id)}
-            className="absolute z-20 -translate-x-1/2 -translate-y-1/2 transition hover:scale-125 cursor-pointer"
-            style={{ left: `${it.x}%`, top: `${it.y}%` }}>
-            <ItemIcon art={it.art} />
-          </button>
-        ))}
-
-        {/* Statusmeldungen */}
-        {status === "sieg-warte" && (
-          <div className="absolute inset-0 z-40 flex items-center justify-center text-4xl font-extrabold text-yellow-200 drop-shadow-lg">
-            Der Baum fällt...
-          </div>
-        )}
       </div>
 
-      {/* Endkarte */}
-      {status === "sieg" && (
-        <Endkarte 
-          titel="SIEG" 
-          beschreibung={`${aepfelGesamt} 🍎 + ${beute.stern} ★ → ${aepfelMitBonus} 🍎 + ${sternMitBonus} ★ (110% Bonus!)`}
-          farbe="from-yellow-300 to-yellow-600" 
-        />
+      {/* Schmetterlinge */}
+      {schm.map((s) => (
+        <div key={s.id} className="absolute z-10 transition-all" style={{ left: `${s.x}%`, top: `${s.y}%`, transform: "translate(-50%, -50%)" }}>
+          <div className={`relative ${s.fallend ? "opacity-70 animate-bounce" : ""}`}>
+            <div className="absolute -left-3 top-0 h-6 w-4 rounded-full bg-pink-400 opacity-90 animate-pulse" style={{ transform: s.fallend ? "scaleX(0.3)" : "rotate(-15deg)" }} />
+            <div className="absolute -right-3 top-0 h-6 w-4 rounded-full bg-pink-400 opacity-90 animate-pulse" style={{ transform: s.fallend ? "scaleX(0.3)" : "rotate(15deg)" }} />
+            <div className="relative z-10 h-3 w-3 rounded-full bg-purple-900" />
+            
+            {/* HP-Leiste über jedem Schmetterling für visuelles Feedback */}
+            {!s.fallend && (
+              <div className="absolute -top-4 left-1/2 h-1 w-6 -translate-x-1/2 border border-black bg-gray-700">
+                <div className="h-full bg-green-500" style={{ width: `${(s.hp / s.maxHp) * 100}%` }} />
+              </div>
+            )}
+            {!s.fallend && <span className="absolute left-1/2 top-1 -translate-x-1/2 text-[8px] font-extrabold text-yellow-300">😈</span>}
+          </div>
+        </div>
+      ))}
+
+      {/* Schüsse */}
+      {schuesse.map((s) => (
+        <div key={s.id} className={`absolute z-20 rounded-full ${s.seite === "spieler" ? "bg-cyan-300 h-2 w-2" : s.istFlaechenschaden ? "bg-orange-500 h-4 w-4 animate-ping" : "bg-rose-400 h-2 w-2"} shadow-[0_0_8px_currentColor]`}
+          style={{ left: `${s.x}%`, top: `${s.y}%`, transform: "translate(-50%,-50%)" }} />
+      ))}
+
+      {/* Fall-Items */}
+      {items.map((it) => (
+        <button key={it.id} type="button" onClick={() => klickItem(it.id)}
+          className="absolute z-20 -translate-x-1/2 -translate-y-1/2 transition hover:scale-125"
+          style={{ left: `${it.x}%`, top: `${it.y}%` }}>
+          <ItemIcon art={it.art} />
+        </button>
+      ))}
+
+      {status === "sieg-warte" && (
+        <div className="absolute inset-0 z-40 flex items-end justify-center pb-12 text-3xl font-extrabold text-yellow-200 drop-shadow">
+          Der Baum fällt...
+        </div>
       )}
-      {status === "niederlage" && (
-        <Endkarte 
-          titel="NIEDERLAGE" 
-          beschreibung={`${aepfelGesamt} 🍎 + ${beute.stern} ★ behalten • Alle Schmetterlinge gefallen`}
-          farbe="from-red-400 to-red-700" 
-        />
-      )}
+      {status === "sieg" && <Endkarte titel="SIEG" beschreibung="100% der Beute behalten." farbe="from-yellow-300 to-yellow-600" />}
+      {status === "niederlage" && <Endkarte titel="NIEDERLAGE" beschreibung="Nur 5% der Beute gerettet." farbe="from-red-400 to-red-700" />}
     </div>
   );
 }
@@ -545,7 +482,7 @@ function ItemIcon({ art }: { art: ItemArt }) {
   if (art === "gruen") return <Apple className="h-7 w-7 text-green-600 drop-shadow" fill="#16A34A" />;
   if (art === "stern") return <SternanisIcon className="h-7 w-7 text-amber-400 drop-shadow" />;
   if (art === "heal") return (
-    <div className="relative">
+    <div className="relative animate-bounce">
       <Apple className="h-7 w-7 text-yellow-500 drop-shadow" fill="#EAB308" />
       <Heart className="absolute inset-0 m-auto h-3 w-3 text-white" fill="white" />
     </div>
@@ -564,7 +501,7 @@ function Endkarte({ titel, beschreibung, farbe }: { titel: string; beschreibung:
       <div className={`rounded-2xl bg-gradient-to-br ${farbe} px-8 py-6 text-center shadow-2xl`}>
         <Trees className="mx-auto mb-2 h-12 w-12 text-emerald-950" />
         <h2 className="text-3xl font-extrabold text-emerald-950">{titel}</h2>
-        <p className="text-emerald-950">{beschreibung}</p>
+        <p className="text-emerald-950 mt-1">{beschreibung}</p>
       </div>
     </div>
   );
