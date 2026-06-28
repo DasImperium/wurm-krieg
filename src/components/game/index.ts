@@ -53,12 +53,12 @@ export {
 
 export { segmentFarbe } from "./utils";
 
-export { default as Spielfeld } from "./Spielfeld";
+export { Spielfeld } from "./Spielfeld";
 
-export { default as Baum } from "./components/Baum";
-export { default as KopfSymbol } from "./components/KopfSymbol";
-export { default as SchwanzSymbol } from "./components/SchwanzSymbol";
-export { default as SegmentIcon } from "./components/SegmentIcon";
-export { default as SegmentSymbolMitIcon } from "./components/SegmentSymbolMitIcon";
-export { default as WurmAnzeige } from "./components/WurmAnzeige";
-export { default as EndBildschirm } from "./components/EndBildschirm";
+export { Baum } from "./components/Baum";
+export { KopfSymbol } from "./components/KopfSymbol";
+export { SchwanzSymbol } from "./components/SchwanzSymbol";
+export { SegmentIcon } from "./components/SegmentIcon";
+export { SegmentSymbolMitIcon } from "./components/SegmentSymbolMitIcon";
+export { WurmAnzeige } from "./components/WurmAnzeige";
+export { EndBildschirm } from "./components/EndBildschirm";
