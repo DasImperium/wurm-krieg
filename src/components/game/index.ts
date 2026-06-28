@@ -45,6 +45,10 @@ export {
   nahkampfSchaden,
   schadenAnWurm,
   zufallsWurmGegner,
+  wurmIdZaehler,
+  fallIdZaehler,
+  mineIdZaehler,
+  effektIdZaehler,
 } from "./wurmUtils";
 
 export { segmentFarbe } from "./utils";
