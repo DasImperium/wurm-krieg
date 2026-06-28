@@ -226,9 +226,14 @@ function UeberfallMatch({
 
   const beendeMatch = useCallback((sieg: boolean) => {
     const final = beuteRef.current;
-    // Gewinn: Alle eingesammelten Items zählen (100%), außer heal/gift
-    const aepfel = sieg ? final.rot + (final.gruen * 5) : 0;
-    const sternanis = sieg ? final.stern : 0;
+    
+    // Gewinn-Regelung:
+    // - Niederlage: 100% der Beute behalten (alles eingesammelte)
+    // - Sieg: 110% der Beute (Bonusmultiplikator)
+    const faktor = sieg ? 1.1 : 1.0;
+    const aepfelRoh = final.rot + (final.gruen * 5);
+    const aepfel = Math.floor(aepfelRoh * faktor);
+    const sternanis = Math.floor(final.stern * faktor);
     
     // Schmetterlinge: Überlebende heilen voll, Gefallene verbraucht
     const ueberlebt = schm.filter((s) => s.hp > 0 && !s.fallend).length;
@@ -373,6 +378,9 @@ function UeberfallMatch({
   };
 
   const baumProz = useMemo(() => (baumHp / baumMax) * 100, [baumHp, baumMax]);
+  const aepfelGesamt = beute.rot + (beute.gruen * 5);
+  const aepfelMitBonus = Math.floor(aepfelGesamt * 1.1);
+  const sternMitBonus = Math.floor(beute.stern * 1.1);
 
   return (
     <div className="relative min-h-screen w-full overflow-hidden bg-gradient-to-b from-sky-300 via-emerald-200 to-emerald-500">
@@ -517,14 +525,14 @@ function UeberfallMatch({
       {status === "sieg" && (
         <Endkarte 
           titel="SIEG" 
-          beschreibung={`${beute.rot + (beute.gruen * 5)} 🍎 + ${beute.stern} ★ erhalten`}
+          beschreibung={`${aepfelGesamt} 🍎 + ${beute.stern} ★ → ${aepfelMitBonus} 🍎 + ${sternMitBonus} ★ (110% Bonus!)`}
           farbe="from-yellow-300 to-yellow-600" 
         />
       )}
       {status === "niederlage" && (
         <Endkarte 
           titel="NIEDERLAGE" 
-          beschreibung="Alle Schmetterlinge gefallen."
+          beschreibung={`${aepfelGesamt} 🍎 + ${beute.stern} ★ behalten • Alle Schmetterlinge gefallen`}
           farbe="from-red-400 to-red-700" 
         />
       )}
