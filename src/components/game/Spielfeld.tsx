@@ -10,45 +10,465 @@ import {
   type SegmentKey,
 } from "@/lib/game/segments";
 import { SternanisIcon } from "./Sternanis";
-import type { Wurm, FallObjekt, Mine, WaffenEffekt, SpielfeldProps, Segment } from "./types";
-import {
-  PRODUKTION_KOSTEN,
-  VERTEIDIGUNG_KOSTEN,
-  PRODUKTION_RATE,
-  VERTEIDIGUNG_BONUS,
-  KANONEN_SCHADEN,
-  KANONEN_REICHWEITE,
-  KANONEN_INTERVALL_MS,
-  BASIS_HP_GRUND,
-  TICK_MS,
-  SPIELER_BASIS_X,
-  GEGNER_BASIS_X,
-  ANZAHL_PFADE,
-} from "./constants";
-import {
-  halbeWurmLaenge,
-  kopfX,
-  segmentKosten,
-  baueSegment,
-  baueWurm,
-  wurmGeschwindigkeit,
-  kettenhemdReduktion,
-  nahkampfSchaden,
-  schadenAnWurm,
-  zufallsWurmGegner,
-  wurmIdZaehler,
-  fallIdZaehler,
-  mineIdZaehler,
-  effektIdZaehler,
-} from "./wurmUtils";
-import { segmentFarbe } from "./utils";
-import { Baum } from "./components/Baum";
-import { KopfSymbol } from "./components/KopfSymbol";
-import { SchwanzSymbol } from "./components/SchwanzSymbol";
-import { SegmentIcon } from "./components/SegmentIcon";
-import { SegmentSymbolMitIcon } from "./components/SegmentSymbolMitIcon";
-import { WurmAnzeige } from "./components/WurmAnzeige";
-import { EndBildschirm } from "./components/EndBildschirm";
+
+// ============================================================================
+// TYPE DEFINITIONS
+// ============================================================================
+
+interface Segment {
+  key: SegmentKey;
+  stufe: number;
+  hp: number;
+  maxHp: number;
+}
+
+interface Wurm {
+  id: number;
+  seite: "spieler" | "gegner";
+  x: number;
+  pfad: number;
+  kopfHp: number;
+  kopfMax: number;
+  schwanzHp: number;
+  schwanzMax: number;
+  segmente: Segment[];
+  sterbend: boolean;
+  todStart: number;
+  geplatzt: Set<number>;
+  flashBis: number;
+  feuerTimer: Record<string, number>;
+  feuerStop: number;
+  heilTimer: number;
+  munition: Record<string, number>;
+  knockbackBis: number;
+}
+
+interface FallObjekt {
+  id: number;
+  art: "blatt" | "apfel";
+  x: number;
+  y: number;
+  geschwindigkeit: number;
+}
+
+interface Mine {
+  id: number;
+  seite: "spieler" | "gegner";
+  x: number;
+  pfad: number;
+  schaden: number;
+}
+
+interface WaffenEffekt {
+  id: number;
+  art: "laser" | "rakete" | "schall";
+  x1: number;
+  x2: number;
+  bottom: number;
+  bis: number;
+  seite: "spieler" | "gegner";
+}
+
+interface KanonenBlitz {
+  id: number;
+  seite: "spieler" | "gegner";
+  zielX: number;
+  bis: number;
+}
+
+interface SpielfeldProps {
+  fortschritt: GespeicherterFortschritt;
+  level: number;
+  onZurueck: () => void;
+  onSieg: (zusatzAepfel: number, zusatzSternanis: number) => void;
+  onNiederlage: () => void;
+}
+
+interface SpielRefs {
+  wuermer: Wurm[];
+  fall: FallObjekt[];
+  minen: Mine[];
+  effekte: WaffenEffekt[];
+  niederlageGemeldet: boolean;
+  letzteBlatt: number;
+  letzterApfelCheck: number;
+  aiSpawn: number;
+  matchAepfelLokal: number;
+  apfelSpawnsImMatch: number;
+  apfelSpawnsThroughDamage: number;
+  spielerKanone: number;
+  gegnerKanone: number;
+  kanonenBlitz: KanonenBlitz[];
+}
+
+// ============================================================================
+// GAME CONSTANTS
+// ============================================================================
+
+const PRODUKTION_KOSTEN = [100, 350, 800];
+const VERTEIDIGUNG_KOSTEN = [150, 400, 800];
+const PRODUKTION_RATE = [5, 10, 20, 40];
+const VERTEIDIGUNG_BONUS = [0, 200, 500, 1000];
+const KANONEN_SCHADEN = [0, 25, 55, 100];
+const KANONEN_REICHWEITE = [0, 12, 22, 30];
+const KANONEN_INTERVALL_MS = 2000;
+const BASIS_HP_GRUND = 1800;
+const TICK_MS = 50;
+const SPIELER_BASIS_X = 3;
+const GEGNER_BASIS_X = 97;
+const ANZAHL_PFADE = 5;
+
+// Global counters
+let wurmIdZaehler = 1;
+let fallIdZaehler = 1;
+let mineIdZaehler = 1;
+let effektIdZaehler = 1;
+
+// ============================================================================
+// WORM UTILITY FUNCTIONS
+// ============================================================================
+
+function halbeWurmLaenge(w: Wurm): number {
+  return ((w.segmente.length + 2) * 2.0) / 2;
+}
+
+function kopfX(w: Wurm): number {
+  const h = halbeWurmLaenge(w);
+  return w.seite === "spieler" ? w.x + h : w.x - h;
+}
+
+function segmentKosten(key: SegmentKey, stufe: number): number {
+  return Math.round(SEGMENTE[key].kosten * (1 + (stufe - 1) * 0.2));
+}
+
+function baueSegment(key: SegmentKey, stufe: number): Segment {
+  const def = SEGMENTE[key];
+  const hp = def.hp[stufe - 1];
+  return { key, stufe, hp, maxHp: hp };
+}
+
+function baueWurm(
+  seite: "spieler" | "gegner",
+  segmente: Segment[],
+  upgrades: GespeicherterFortschritt["upgrades"],
+): Wurm {
+  const munition: Record<string, number> = {};
+  segmente.forEach((s, i) => {
+    const def = SEGMENTE[s.key];
+    if (def.fernkampf?.munition) {
+      munition[String(i)] = def.fernkampf.munition;
+    }
+  });
+
+  const feuerTimer: Record<string, number> = {};
+  segmente.forEach((s, i) => {
+    const def = SEGMENTE[s.key];
+    if (def.fernkampf) feuerTimer[String(i)] = def.fernkampf.intervallMs;
+  });
+
+  return {
+    id: wurmIdZaehler++,
+    seite,
+    x: seite === "spieler" ? -2 : 102,
+    pfad: Math.floor(Math.random() * ANZAHL_PFADE),
+    kopfHp: 80,
+    kopfMax: 80,
+    schwanzHp: 40,
+    schwanzMax: 40,
+    segmente,
+    sterbend: false,
+    todStart: 0,
+    geplatzt: new Set(),
+    flashBis: 0,
+    feuerTimer,
+    feuerStop: 0,
+    heilTimer: 5000,
+    munition,
+    knockbackBis: 0,
+  };
+}
+
+function wurmGeschwindigkeit(w: Wurm): number {
+  let bonus = 0;
+  let malus = 0;
+  for (const s of w.segmente) {
+    const def = SEGMENTE[s.key];
+    if (def.speedBonus) bonus = Math.max(bonus, def.speedBonus[s.stufe - 1]);
+    if (def.speedMalus) malus += def.speedMalus[s.stufe - 1];
+  }
+  return Math.max(1, 5 + bonus - malus);
+}
+
+function kettenhemdReduktion(w: Wurm): number {
+  let r = 0;
+  for (const s of w.segmente) {
+    const def = SEGMENTE[s.key];
+    if (def.schadensReduktion) r += def.schadensReduktion[s.stufe - 1];
+  }
+  return Math.min(50, r);
+}
+
+function nahkampfSchaden(w: Wurm): number {
+  let s = 4;
+  for (const seg of w.segmente) {
+    const def = SEGMENTE[seg.key];
+    if (def.nahkampfBonus) s += def.nahkampfBonus[seg.stufe - 1];
+  }
+  return s;
+}
+
+function schadenAnWurm(w: Wurm, schaden: number, jetzt: number): boolean {
+  if (w.sterbend) return true;
+  const reduziert = schaden * (1 - kettenhemdReduktion(w) / 100);
+  w.flashBis = jetzt + 150;
+  w.knockbackBis = jetzt + 300;
+  const kb = 0.8;
+  w.x += w.seite === "spieler" ? -kb : kb;
+  if (w.kopfHp > 0) {
+    w.kopfHp -= reduziert;
+    if (w.kopfHp <= 0) {
+      w.sterbend = true;
+      w.todStart = jetzt;
+      return true;
+    }
+    return false;
+  }
+  for (const seg of w.segmente) {
+    if (seg.hp > 0) {
+      seg.hp -= reduziert;
+      return false;
+    }
+  }
+  if (w.schwanzHp > 0) {
+    w.schwanzHp -= reduziert;
+  }
+  return false;
+}
+
+function zufallsWurmGegner(
+  upgrades: GespeicherterFortschritt["upgrades"],
+  level: number,
+  prozeduralWlr?: number,
+): Wurm {
+  const effLevel = prozeduralWlr !== undefined
+    ? Math.max(1, Math.min(100, Math.floor(8 + prozeduralWlr * 50)))
+    : level;
+  const minAnz = Math.max(1, Math.min(5, Math.floor(effLevel / 18) + 1));
+  const maxAnz = Math.max(minAnz, Math.min(6, 2 + Math.floor(effLevel / 14)));
+  const anzahl = minAnz + Math.floor(Math.random() * (maxAnz - minAnz + 1));
+
+  const billig: SegmentKey[] = ["beine", "schallpistole"];
+  const mittel: SegmentKey[] = ["kettenhemd", "heilung", "schallpistole", "kastanie"];
+  const stark: SegmentKey[] = ["panzer", "laser", "raketenwerfer"];
+  const segmente: Segment[] = [];
+
+  for (let i = 0; i < anzahl; i++) {
+    const r = Math.random();
+    const starkChance = Math.min(0.75, 0.05 + effLevel * 0.009);
+    const mittelChance = Math.min(0.5, 0.15 + effLevel * 0.006);
+    let pool: SegmentKey[];
+    if (r < starkChance) pool = stark;
+    else if (r < starkChance + mittelChance) pool = mittel;
+    else pool = billig;
+    const key = pool[Math.floor(Math.random() * pool.length)];
+    const sr = Math.random();
+    let stufe = 1;
+    if (effLevel >= 9 && effLevel <= 50) {
+      const p2 = (effLevel - 8) / 42 * 0.5;
+      if (sr < p2) stufe = 2;
+    } else if (effLevel >= 51 && effLevel <= 74) {
+      if (sr < 0.15) stufe = 4;
+      else if (sr < 0.55) stufe = 3;
+      else stufe = 2;
+    } else if (effLevel >= 75) {
+      if (sr < 0.2) stufe = 5;
+      else if (sr < 0.6) stufe = 4;
+      else stufe = 3;
+    }
+    stufe = Math.min(stufe, upgrades[key] !== undefined ? upgrades[key] : stufe);
+    segmente.push(baueSegment(key, stufe));
+  }
+  return baueWurm("gegner", segmente, upgrades);
+}
+
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
+
+function segmentFarbe(key: SegmentKey): string {
+  const map: Record<SegmentKey, string> = {
+    beine: "bg-yellow-500",
+    panzer: "bg-stone-600",
+    kettenhemd: "bg-zinc-400",
+    heilung: "bg-pink-400",
+    schallpistole: "bg-purple-500",
+    laser: "bg-cyan-400",
+    kastanie: "bg-amber-700",
+    raketenwerfer: "bg-orange-600",
+  };
+  return map[key];
+}
+
+// ============================================================================
+// UI COMPONENTS
+// ============================================================================
+
+function SegmentIcon({ keyName, className }: { keyName: SegmentKey; className?: string }) {
+  const cls = className ?? "h-5 w-5 text-white drop-shadow";
+  switch (keyName) {
+    case "beine": return <Footprints className={cls} />;
+    case "panzer": return <Shield className={cls} />;
+    case "kettenhemd": return <LinkIcon className={cls} />;
+    case "heilung": return <HeartPulse className={cls} />;
+    case "schallpistole": return <Volume2 className={cls} />;
+    case "laser": return <Zap className={cls} />;
+    case "kastanie": return <Bomb className={cls} />;
+    case "raketenwerfer": return <Rocket className={cls} />;
+  }
+  return null;
+}
+
+function Baum({ seite, name, farbe }: { seite: "links" | "rechts"; name: string; farbe: "emerald" | "rose" }) {
+  const pos = seite === "links" ? "left-0" : "right-0";
+  const krone = farbe === "emerald" ? "bg-emerald-700" : "bg-rose-700";
+  const kroneHell = farbe === "emerald" ? "bg-emerald-500" : "bg-rose-500";
+  return (
+    <div className={`absolute bottom-0 ${pos} z-20 flex w-28 flex-col items-center`}>
+      <div className="relative">
+        <div className={`h-28 w-28 rounded-full ${krone} shadow-2xl ring-4 ring-emerald-900/40`} />
+        <div className={`absolute left-3 top-3 h-8 w-8 rounded-full ${kroneHell} opacity-60`} />
+        <div className={`absolute right-4 top-6 h-5 w-5 rounded-full ${kroneHell} opacity-60`} />
+      </div>
+      <div className="-mt-6 h-24 w-10 rounded bg-gradient-to-b from-amber-800 to-amber-950 shadow-inner">
+        <div className="mx-auto mt-10 h-12 w-6 rounded-t-full bg-amber-950" />
+      </div>
+      <div className="absolute -top-3 rounded bg-emerald-950 px-2 py-0.5 text-[10px] font-bold text-white shadow">
+        {name}
+      </div>
+    </div>
+  );
+}
+
+function KopfSymbol({ farbe }: { farbe: string }) {
+  return (
+    <div className="relative h-10 w-10 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-700 ring-2 ring-emerald-900 shadow-md">
+      <div className={`absolute -top-2 left-0.5 h-3 w-9 rounded-md ${farbe} shadow`} />
+      <Smile className="absolute inset-0 m-auto h-6 w-6 text-emerald-950" />
+    </div>
+  );
+}
+
+function SegmentSymbolMitIcon({ keyName }: { keyName: SegmentKey }) {
+  return (
+    <div className={`relative flex h-10 w-10 items-center justify-center rounded-full ${segmentFarbe(keyName)} ring-2 ring-emerald-900 shadow`}>
+      <SegmentIcon keyName={keyName} />
+    </div>
+  );
+}
+
+function SchwanzSymbol() {
+  return (
+    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-emerald-800 ring-2 ring-emerald-900 shadow">
+      <Leaf className="h-4 w-4 -rotate-45 text-emerald-100" fill="currentColor" />
+    </div>
+  );
+}
+
+function WurmAnzeige({ wurm }: { wurm: Wurm }) {
+  const jetzt = performance.now();
+  const flash = jetzt < wurm.flashBis;
+  const baretFarbe = wurm.seite === "spieler" ? "bg-blue-600" : "bg-red-600";
+
+  type Teil = { id: number; typ: "kopf" } | { id: number; typ: "segment"; key: SegmentKey; stufe: number } | { id: number; typ: "schwanz" };
+  const teile: Teil[] = [
+    { id: -1, typ: "kopf" },
+    ...wurm.segmente.map((s, i) => ({ id: i, typ: "segment" as const, key: s.key, stufe: s.stufe })),
+    { id: wurm.segmente.length, typ: "schwanz" as const },
+  ];
+
+  const kopfRechts = wurm.seite === "spieler";
+  const laneOffset = 20 + wurm.pfad * 14;
+  return (
+    <div
+      className="absolute"
+      style={{ left: `${wurm.x}%`, bottom: `${laneOffset}px`, transform: "translateX(-50%)" }}
+    >
+      <div className="flex items-end gap-0.5">
+        {(kopfRechts ? [...teile].reverse() : teile).map((t, i) => {
+          const pulse = flash ? "ring-4 ring-red-500" : "";
+          const baseScale = "transition-all duration-300";
+          const platzAnim = wurm.sterbend ? "scale-125 opacity-0 -translate-y-4" : "";
+          if (t.typ === "kopf") {
+            return (
+              <div key={i} className={`relative ${baseScale} ${platzAnim}`}>
+                <div className={`relative h-10 w-10 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-700 ring-2 ring-emerald-900 shadow ${pulse}`}>
+                  <div className={`absolute -top-2 left-1 h-3 w-8 rounded-md ${baretFarbe} shadow`} />
+                  <Smile className="absolute inset-0 m-auto h-6 w-6 text-emerald-950" />
+                </div>
+              </div>
+            );
+          }
+          if (t.typ === "schwanz") {
+            return (
+              <div key={i} className={`${baseScale} ${platzAnim}`}>
+                <div className={`flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-emerald-800 ring-2 ring-emerald-900 shadow ${pulse}`}>
+                  <Leaf className="h-4 w-4 -rotate-45 text-emerald-100" fill="currentColor" />
+                </div>
+              </div>
+            );
+          }
+          return (
+            <div key={i} className={`${baseScale} ${platzAnim}`}>
+              <div className={`relative flex h-10 w-10 items-center justify-center rounded-full ${segmentFarbe(t.key)} ring-2 ring-emerald-900 shadow ${pulse}`}>
+                <SegmentIcon keyName={t.key} />
+                {t.stufe > 1 && (
+                  <span className="absolute -bottom-1 -right-1 rounded-full bg-yellow-300 px-1 text-[8px] font-bold text-emerald-950 ring-1 ring-emerald-900">
+                    {t.stufe}
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function EndBildschirm({
+  titel,
+  beschreibung,
+  farbe,
+  aktion,
+  aktionLabel,
+}: {
+  titel: string;
+  beschreibung: string;
+  farbe: string;
+  aktion: () => void;
+  aktionLabel: string;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+      <div className={`max-w-md rounded-2xl bg-gradient-to-br ${farbe} p-8 text-center shadow-2xl`}>
+        <Trophy className="mx-auto mb-3 h-16 w-16 text-emerald-950" />
+        <h2 className="text-3xl font-extrabold text-emerald-950">{titel}</h2>
+        <p className="mt-2 text-emerald-950">{beschreibung}</p>
+        <button
+          type="button"
+          onClick={aktion}
+          className="mt-6 rounded-xl bg-emerald-950 px-6 py-3 text-base font-bold text-white hover:bg-emerald-800"
+        >
+          {aktionLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
 
 export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage }: SpielfeldProps) {
   const istProzedural = level === 0;
@@ -66,7 +486,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
   const [gegnerBasisHp, setGegnerBasisHp] = useState(gegnerBasisMax);
   const [wuermerState, setWuermerState] = useState<Wurm[]>([]);
   const [fallObjekte, setFallObjekte] = useState<FallObjekt[]>([]);
-  const [matchAepfel, setMatchAepfel] = useState(0); // gefundene Äpfel im Match
+  const [matchAepfel, setMatchAepfel] = useState(0);
   const [matchSternanis, setMatchSternanis] = useState(0);
   const [minen, setMinen] = useState<Mine[]>([]);
   const [effekte, setEffekte] = useState<WaffenEffekt[]>([]);
@@ -74,23 +494,23 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
   const [sieg, setSieg] = useState(false);
   const [niederlage, setNiederlage] = useState(false);
 
-  const refs = useRef({
-    wuermer: [] as Wurm[],
-    fall: [] as FallObjekt[],
-    minen: [] as Mine[],
-    effekte: [] as WaffenEffekt[],
+  const refs = useRef<SpielRefs>({
+    wuermer: [],
+    fall: [],
+    minen: [],
+    effekte: [],
     niederlageGemeldet: false,
     letzteBlatt: 0,
     letzterApfelCheck: 0,
     aiSpawn: 0,
     matchAepfelLokal: 0,
     apfelSpawnsImMatch: 0,
-    apfelSpawnsThroughDamage: 0, // Zähler für durch Treffer gespawnte Äpfel
+    apfelSpawnsThroughDamage: 0,
     spielerKanone: 0,
     gegnerKanone: 0,
-    kanonenBlitz: [] as Array<{ id: number; seite: "spieler" | "gegner"; zielX: number; bis: number }>,
+    kanonenBlitz: [],
   });
-  const [kanonenBlitze, setKanonenBlitze] = useState<typeof refs.current.kanonenBlitz>([]);
+  const [kanonenBlitze, setKanonenBlitze] = useState<KanonenBlitz[]>([]);
 
   // Basis HP Anpassung an Verteidigungsstufe
   useEffect(() => {
@@ -152,23 +572,20 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
   // Funktion zum Spawnen eines Apfels durch Schaden am feindlichen Baum
   const trySpawnApfelFromDamage = useCallback(() => {
     const r = refs.current;
-    // Nur wenn feindlicher Baum unter 80% Leben hat
     if (gegnerBasisHp < 0.8 * gegnerBasisMax) {
-      // 12% Chance und maximal 12 Äpfel
       if (Math.random() < 0.12 && r.apfelSpawnsThroughDamage < 12) {
         r.apfelSpawnsThroughDamage++;
         r.fall.push({
           id: fallIdZaehler++,
           art: "apfel",
-          x: 70 + Math.random() * 20, // Spawn näher am feindlichen Baum (70-90%)
+          x: 70 + Math.random() * 20,
           y: 0,
           geschwindigkeit: 0.6,
         });
-        // Aktualisiere die Fall-Objekte im State
         setFallObjekte([...r.fall]);
       }
     }
-  }, [gegnerBasisHp, gegnerBasisMax, fallObjekte]);
+  }, [gegnerBasisHp, gegnerBasisMax]);
 
   // Fall-Objekte aufheben
   useEffect(() => {
@@ -218,12 +635,12 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
       const jetzt = performance.now();
       const r = refs.current;
 
-      // --- Wirtschaft ---
+      // Wirtschaft
       const rate = PRODUKTION_RATE[produktionsStufe];
       setBlaetter((b) => b + (rate * TICK_MS) / 1000);
       setAiBlaetter((b) => b + (rate * TICK_MS) / 1000);
 
-      // --- Fall-Objekte spawn ---
+      // Fall-Objekte spawn
       r.letzteBlatt += TICK_MS;
       if (r.letzteBlatt >= 10000) {
         r.letzteBlatt = 0;
@@ -255,7 +672,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
         .map((o) => ({ ...o, y: o.y + o.geschwindigkeit }))
         .filter((o) => o.y < 100);
 
-      // --- AI Spawn ---
+      // AI Spawn
       r.aiSpawn += TICK_MS;
       if (r.aiSpawn >= aiSpawnInterval) {
         r.aiSpawn = 0;
@@ -264,7 +681,6 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
           (acc, s) => acc + segmentKosten(s.key, s.stufe),
           0,
         );
-        // AI muss sich leisten können
         setAiBlaetter((b) => {
           if (b >= kostenBlaetter) {
             r.wuermer.push(wurm);
@@ -274,7 +690,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
         });
       }
 
-      // --- Wurm Update ---
+      // Wurm Update
       const lebendig = r.wuermer.filter((w) => !w.sterbend);
       for (const w of lebendig) {
         // Heilung
@@ -293,7 +709,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
           }
         }
 
-        // Ziel finden — Distanzen ab vorderster Kopfstelle.
+        // Ziel finden
         const meinKopf = kopfX(w);
         const gegner = lebendig.filter((g) => g.seite !== w.seite);
         let zielWurm: Wurm | null = null;
@@ -309,11 +725,9 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
         const basisDist = Math.abs(basisX - meinKopf);
         if (!zielWurm) minDist = basisDist;
 
-        // Bewegung: Wuermer blockieren sich NICHT. Sie laufen immer bis zur gegn. Basis
-        // (Baum am Kartenende blockiert die Bewegung).
+        // Bewegung
         const speed = wurmGeschwindigkeit(w);
         const kannBewegen = jetzt >= w.feuerStop && jetzt >= w.knockbackBis;
-        // Kopf-an-Kopf-Blockade: kein Überlappen mit Gegnerwürmern.
         let blockiert = false;
         for (const g of gegner) {
           const gKopf = kopfX(g);
@@ -329,7 +743,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
           }
         }
 
-        // Nahkampf: nur Gegner unmittelbar vor dem Kopf.
+        // Nahkampf
         const dmgProSek = nahkampfSchaden(w);
         const tickDmg = (dmgProSek * TICK_MS) / 1000;
         let hatGebissen = false;
@@ -346,7 +760,6 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
           if (w.seite === "spieler") {
             setGegnerBasisHp((h) => {
               const newHp = Math.max(0, h - dmg);
-              // Apfel-Spawn bei Treffer auf feindlichen Baum (wenn unter 80% Leben)
               if (h > newHp) {
                 trySpawnApfelFromDamage();
               }
@@ -366,11 +779,9 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
           const key = String(i);
           w.feuerTimer[key] = (w.feuerTimer[key] ?? fk.intervallMs) - TICK_MS;
           if (w.feuerTimer[key] > 0) return;
-          // Munition prüfen
           if (fk.munition !== undefined) {
             if ((w.munition[key] ?? 0) <= 0) return;
           }
-          // Kastanien sind Minen — legen sie direkt am eigenen Kopf ab und brechen ab
           if (s.key === "kastanie") {
             if ((w.munition[key] ?? 0) <= 0) return;
             w.feuerTimer[key] = fk.intervallMs;
@@ -381,18 +792,15 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
             });
             return;
           }
-          // Reichweite ab vorderster Kopfstelle.
           if (!zielWurm) {
             if (basisDist > fk.reichweite) return;
           } else if (Math.abs(kopfX(zielWurm) - meinKopf) > fk.reichweite) return;
 
-          // Feuern
           w.feuerTimer[key] = fk.intervallMs;
           w.feuerStop = jetzt + 500;
           if (fk.munition !== undefined) w.munition[key] = (w.munition[key] ?? 0) - 1;
           const schadenWert = fk.schaden[Math.min(s.stufe - 1, fk.schaden.length - 1)];
           const schuesse = fk.anzahl ?? 1;
-          // Optischer Effekt: startet an Kopfvorderkante.
           const zielX = zielWurm ? kopfX(zielWurm) : (w.seite === "spieler" ? GEGNER_BASIS_X : SPIELER_BASIS_X);
           r.effekte.push({
             id: effektIdZaehler++,
@@ -409,7 +817,6 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
               if (w.seite === "spieler") {
                 setGegnerBasisHp((h) => {
                   const newHp = Math.max(0, h - schadenWert);
-                  // Apfel-Spawn bei Treffer auf feindlichen Baum (wenn unter 80% Leben)
                   if (h > newHp) {
                     trySpawnApfelFromDamage();
                   }
@@ -423,7 +830,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
         });
       }
 
-      // --- Minen-Trigger ---
+      // Minen-Trigger
       r.minen = r.minen.filter((m) => {
         const feind = lebendig.find((w) => w.seite !== m.seite && Math.abs(kopfX(w) - m.x) <= 2);
         if (feind) {
@@ -438,11 +845,10 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
       });
       r.effekte = r.effekte.filter((e) => e.bis > jetzt);
 
-      // Tod-Animation: pop segments alle 150ms vom Kopf nach hinten
-      // Tote Wuermer werden komplett (Kopf + alle Segmente + Schwanz) entfernt.
+      // Tod-Animation
       r.wuermer = r.wuermer.filter((w) => !w.sterbend);
 
-      // --- Basis-Kanonen ---
+      // Basis-Kanonen
       r.spielerKanone += TICK_MS;
       r.gegnerKanone += TICK_MS;
       const feuereKanone = (seite: "spieler" | "gegner", stufe: number) => {
@@ -470,7 +876,6 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
       }
       if (r.gegnerKanone >= KANONEN_INTERVALL_MS) {
         r.gegnerKanone = 0;
-        // Gegner-Verteidigung skaliert mit Level (höhere Level = härtere Abwehr)
         const gegnerStufe = Math.min(3, 1 + Math.floor(level / 17));
         feuereKanone("gegner", gegnerStufe);
       }
@@ -584,7 +989,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
         </div>
       ))}
 
-      {/* Fall-Objekte */}
+      {/* Fall-Objekte - mit Klick-Handler */}
       {fallObjekte.map((obj) => (
         <div
           key={obj.id}
@@ -595,7 +1000,6 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
             transform: "translate(-50%, -50%)",
           }}
           onClick={() => {
-            // Apfel durch Antippen sammeln
             if (obj.art === "apfel") {
               setMatchAepfel(matchAepfel + 1);
               setFallObjekte(fallObjekte.filter(f => f.id !== obj.id));
@@ -623,9 +1027,7 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
                 onClick={() => handleSegmentHinzufuegen(key)}
                 disabled={!kannBauen}
                 className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-bold text-white transition-colors ${
-                  kannBauen 
-                    ? "bg-emerald-600 hover:bg-emerald-500" 
-                    : "bg-gray-600 cursor-not-allowed"
+                  kannBauen ? "bg-emerald-600 hover:bg-emerald-500" : "bg-gray-600 cursor-not-allowed"
                 }`}
                 title={kannBauen ? SEGMENTE[key].name : "Noch nicht freigeschaltet"}
               >
