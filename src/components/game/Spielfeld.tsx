@@ -164,9 +164,11 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
           y: 0,
           geschwindigkeit: 0.6,
         });
+        // Aktualisiere die Fall-Objekte im State
+        setFallObjekte([...r.fall]);
       }
     }
-  }, [gegnerBasisHp, gegnerBasisMax]);
+  }, [gegnerBasisHp, gegnerBasisMax, fallObjekte]);
 
   // Fall-Objekte aufheben
   useEffect(() => {
@@ -586,11 +588,18 @@ export function Spielfeld({ fortschritt, level, onZurueck, onSieg, onNiederlage 
       {fallObjekte.map((obj) => (
         <div
           key={obj.id}
-          className="absolute"
+          className="absolute cursor-pointer"
           style={{
             left: `${obj.x}%`,
             top: `${obj.y}%`,
             transform: "translate(-50%, -50%)",
+          }}
+          onClick={() => {
+            // Apfel durch Antippen sammeln
+            if (obj.art === "apfel") {
+              setMatchAepfel(matchAepfel + 1);
+              setFallObjekte(fallObjekte.filter(f => f.id !== obj.id));
+            }
           }}
         >
           {obj.art === "blatt" ? (
