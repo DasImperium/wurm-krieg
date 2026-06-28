@@ -333,6 +333,7 @@ function UeberfallMatch({ fortschritt, onAenderung, onFertig }: { fortschritt: G
         const linksLebend = lebend.filter(s => s.seite === "links");
         const rechtsLebend = lebend.filter(s => s.seite === "rechts");
 
+        // Dynamischer Fokus: Sucht sich jeden Tick ein wechselndes Primärziel pro Seite aus
         const zielLinks = linksLebend.length > 0 ? linksLebend[Math.floor(Math.random() * linksLebend.length)].id : null;
         const zielRechts = rechtsLebend.length > 0 ? rechtsLebend[Math.floor(Math.random() * rechtsLebend.length)].id : null;
 
@@ -346,15 +347,26 @@ function UeberfallMatch({ fortschritt, onAenderung, onFertig }: { fortschritt: G
           let neueHp = s.hp;
           let amWackeln = s.wackelTimer > 0 ? s.wackelTimer - 1 : 0;
 
-          // Schaden vom Baum an Schmetterlingen erhöht (Gegenwehr-Balancing)
+          // 1. Permanenter, verteilter Grundschaden (Flächenschaden an allen)
+          neueHp -= (2.0 + level * 0.15);
+
+          // 2. Erhöhter Einzelschaden auf das wechselnde Primärziel (Fokus verliert deutlich schneller)
           if (s.id === zielLinks || s.id === zielRechts) {
-            neueHp -= (2.5 + level * 0.2); 
-            if (Math.random() < 0.2) amWackeln = 4;
+            neueHp -= (14 + level * 1.5); 
+            if (Math.random() < 0.3) amWackeln = 4;
           }
 
+          // 3. Großer Baum-Hieb (Kombination aus globalem AoE-Flächenschaden und Fokus-Todesstoß)
           if (mussMitzaehlenAngriff === 0) {
-            neueHp -= (18 + level * 0.5);
+            // Alle lebenden Schmetterlinge erleiden Flächenschaden
+            neueHp -= (35 + level * 1.2);
             amWackeln = 5;
+
+            // Die beiden Primärziele fangen zusätzlich den massiven Hauptschlag ab
+            if (s.id === zielLinks || s.id === zielRechts) {
+              neueHp -= (120 + level * 10);
+              amWackeln = 8;
+            }
           }
 
           if (neueHp <= 0) {
@@ -465,7 +477,7 @@ function UeberfallMatch({ fortschritt, onAenderung, onFertig }: { fortschritt: G
           }}>
           <div className="relative">
             <div className={`absolute -left-3 top-0 h-6 w-4 rounded-full bg-pink-400 opacity-90 ${s.fallend ? "scale-x-[0.1] origin-right rotate-[70deg]" : "animate-pulse"}`} style={{ transform: !s.fallend ? "rotate(-15deg)" : "" }} />
-            <div className={`absolute -right-3 top-0 h-6 w-4 rounded-full bg-pink-400 opacity-90 ${s.fallend ? "scale-x-[0.1] origin-left rotate-[70deg]" : "animate-pulse"}`} style={{ transform: !s.fallend ? "rotate(15deg)" : "" }} />
+            <div className={`absolute -right-3 top-0 h-6 w-4 rounded-full bg-pink-400 opacity-90 ${s.fallend ? "scale-x-[0.1] origin-left rotate-[-70deg]" : "animate-pulse"}`} style={{ transform: !s.fallend ? "rotate(15deg)" : "" }} />
             
             <div className={`relative z-10 h-3 w-3 rounded-full ${s.fallend ? "bg-stone-700" : giftImmunTimer > 0 ? "bg-red-500 shadow-[0_0_8px_#EF4444] animate-ping" : "bg-purple-900 shadow-[0_0_6px_#F472B6]"}`} />
             
