@@ -1,16 +1,9 @@
 /**
  * Game Components Index
- * Exportiert alle Komponenten und Utilities für das Spiel sauber ohne Kreis-Importe.
  */
 
-// 1. Typen exportieren
+// 1. REINE Typen exportieren (Falls diese in types.ts als "interface" oder "type" definiert sind)
 export type {
-  Segment,
-  Wurm,
-  FallObjekt,
-  Mine,
-  WaffenEffekt,
-  KanonenBlitz,
   SpielfeldProps,
   SpielRefs,
 } from "./types";
@@ -31,7 +24,7 @@ export {
   ANZAHL_PFADE,
 } from "./constants";
 
-// 3. Hilfsfunktionen (wurmUtils) exportieren
+// 3. Hilfsfunktionen exportieren
 export {
   getNextIdZaehler,
   getNextWurmId,
@@ -54,7 +47,7 @@ export {
   effektIdZaehler,
 } from "./wurmUtils";
 
-// 4. Allgemeine Utilities exportieren
+// 4. Utilities exportieren
 export { segmentFarbe } from "./utils";
 
 // 5. Haupt-Ansichten exportieren
@@ -62,12 +55,3 @@ export { default as Hauptmenue } from "./Hauptmenue";
 export { default as Spielfeld } from "./Spielfeld";
 export { default as Ueberfall } from "./Ueberfall";
 export { default as AdminPanel } from "./AdminPanel";
-
-// 6. Unterkomponenten exportieren (Diese liegen laut Struktur im Unterordner "./components/")
-export { default as Baum } from "./components/Baum";
-export { default as KopfSymbol } from "./components/KopfSymbol";
-export { default as SchwanzSymbol } from "./components/SchwanzSymbol";
-export { default as SegmentIcon } from "./components/SegmentIcon";
-export { default as SegmentSymbolMitIcon } from "./components/SegmentSymbolMitIcon";
-export { default as Wurmanzeige } from "./components/Wurmanzeige";
-export { default as EndBildschirm } from "./components/EndBildschirm";
